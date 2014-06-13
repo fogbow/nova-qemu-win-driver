@@ -25,8 +25,13 @@ semantics of real hypervisor connections.
 
 """
 
+import functools
+import os
+import uuid
+
 from oslo.config import cfg
 
+from nova.api.metadata import base as instance_metadata
 from nova import block_device
 from nova.compute import power_state
 from nova.compute import task_states
@@ -36,6 +41,17 @@ from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
 from nova.virt import driver
 from nova.virt import virtapi
+from nova.virt.qemuwin import blockinfo
+from nova.virt.qemuwin import imagebackend
+from nova.virt.qemuwin import imagecache
+from nova.virt.qemuwin import utils as libvirt_utils
+from nova.virt.disk import api as disk
+from nova.compute import flavors
+from nova import utils
+from nova.virt import netutils
+from nova.virt import driver
+from nova.virt import configdrive
+from nova.openstack.common import fileutils
 
 CONF = cfg.CONF
 CONF.import_opt('host', 'nova.netconf')
@@ -107,6 +123,7 @@ class QemuWinDriver(driver.ComputeDriver):
           }
         self._mounts = {}
         self._interfaces = {}
+        self.image_backend = imagebackend.Backend(CONF.use_cow_images)
         if not _FAKE_NODES:
             set_nodes([CONF.host])
 
@@ -130,12 +147,271 @@ class QemuWinDriver(driver.ComputeDriver):
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info=None, block_device_info=None):
         name = instance['name']
-        print "fogbow.FakeDriver creating %s." % name
-        LOG.info("fogbow.FakeDriver creating %s." % name)
-        LOG.info("%s." % image_meta)
+        LOG.info("qemuwin.QemuWinDriver creating %s." % name)
+        LOG.info("%s." % instance)
         state = power_state.RUNNING
+        disk_info = blockinfo.get_disk_info('qemu',
+                                            instance,
+                                            block_device_info,
+                                            image_meta)
+        self._create_image(context, instance,
+                           disk_info['mapping'],
+                           network_info=network_info,
+                           block_device_info=block_device_info,
+                           files=injected_files,
+                           admin_pass=admin_password)
         fake_instance = FakeInstance(name, state)
         self.instances[name] = fake_instance
+		
+    @staticmethod
+    def _get_console_log_path(instance):
+        return os.path.join(libvirt_utils.get_instance_path(instance),
+                            'console.log')
+
+    @staticmethod
+    def _get_disk_config_path(instance):
+        return os.path.join(libvirt_utils.get_instance_path(instance),
+                            'disk.config')
+		
+    def _chown_console_log_for_instance(self, instance):
+        console_log = self._get_console_log_path(instance)
+        if os.path.exists(console_log):
+            libvirt_utils.chown(console_log, os.getuid())
+
+    def _chown_disk_config_for_instance(self, instance):
+        disk_config = self._get_disk_config_path(instance)
+        if os.path.exists(disk_config):
+            libvirt_utils.chown(disk_config, os.getuid())
+			
+    @staticmethod
+    def _create_local(target, local_size, unit='G',
+                      fs_format=None, label=None):
+        """Create a blank image of specified size."""
+
+        if not fs_format:
+            fs_format = CONF.default_ephemeral_format
+
+        if not CONF.libvirt_images_type == "lvm":
+            libvirt_utils.create_image('raw', target,
+                                       '%d%c' % (local_size, unit))
+        if fs_format:
+            utils.mkfs(fs_format, target, label)
+
+    def _create_ephemeral(self, target, ephemeral_size, fs_label, os_type,
+                          max_size=None):
+        self._create_local(target, ephemeral_size)
+        disk.mkfs(os_type, fs_label, target)
+		
+    def _create_image(self, context, instance,
+                      disk_mapping, suffix='',
+                      disk_images=None, network_info=None,
+                      block_device_info=None, files=None,
+                      admin_pass=None, inject_files=True):
+        if not suffix:
+            suffix = ''
+
+        booted_from_volume = (
+            (not bool(instance.get('image_ref')))
+            or 'disk' not in disk_mapping
+        )
+
+        # syntactic nicety
+        def basepath(fname='', suffix=suffix):
+            return os.path.join(libvirt_utils.get_instance_path(instance),
+                                fname + suffix)
+
+        def image(fname, image_type=CONF.libvirt_images_type):
+            return self.image_backend.image(instance,
+                                            fname + suffix, image_type)
+
+        def raw(fname):
+            return image(fname, image_type='raw')
+
+        # ensure directories exist and are writable
+        fileutils.ensure_tree(basepath(suffix=''))
+
+        LOG.info(_('Creating image'), instance=instance)
+
+        # NOTE(dprince): for rescue console.log may already exist... chown it.
+        self._chown_console_log_for_instance(instance)
+
+        # NOTE(yaguang): For evacuate disk.config already exist in shared
+        # storage, chown it.
+        self._chown_disk_config_for_instance(instance)
+
+        # NOTE(vish): No need add the suffix to console.log
+        libvirt_utils.write_to_file(
+            self._get_console_log_path(instance), '', 7)
+
+        if not disk_images:
+            disk_images = {'image_id': instance['image_ref'],
+                           'kernel_id': instance['kernel_id'],
+                           'ramdisk_id': instance['ramdisk_id']}
+
+        if disk_images['kernel_id']:
+            fname = imagecache.get_cache_fname(disk_images, 'kernel_id')
+            raw('kernel').cache(fetch_func=libvirt_utils.fetch_image,
+                                context=context,
+                                filename=fname,
+                                image_id=disk_images['kernel_id'],
+                                user_id=instance['user_id'],
+                                project_id=instance['project_id'])
+            if disk_images['ramdisk_id']:
+                fname = imagecache.get_cache_fname(disk_images, 'ramdisk_id')
+                raw('ramdisk').cache(fetch_func=libvirt_utils.fetch_image,
+                                     context=context,
+                                     filename=fname,
+                                     image_id=disk_images['ramdisk_id'],
+                                     user_id=instance['user_id'],
+                                     project_id=instance['project_id'])
+
+        inst_type = flavors.extract_flavor(instance)
+
+        # NOTE(ndipanov): Even if disk_mapping was passed in, which
+        # currently happens only on rescue - we still don't want to
+        # create a base image.
+        if not booted_from_volume:
+            root_fname = imagecache.get_cache_fname(disk_images, 'image_id')
+            size = instance['root_gb'] * 1024 * 1024 * 1024
+
+            if size == 0 or suffix == '.rescue':
+                size = None
+
+            image('disk').cache(fetch_func=libvirt_utils.fetch_image,
+                                context=context,
+                                filename=root_fname,
+                                size=size,
+                                image_id=disk_images['image_id'],
+                                user_id=instance['user_id'],
+                                project_id=instance['project_id'])
+
+        # Lookup the filesystem type if required
+        os_type_with_default = disk.get_fs_type_for_os_type(
+                                                          instance['os_type'])
+
+        ephemeral_gb = instance['ephemeral_gb']
+        if 'disk.local' in disk_mapping:
+            fn = functools.partial(self._create_ephemeral,
+                                   fs_label='ephemeral0',
+                                   os_type=instance["os_type"])
+            fname = "ephemeral_%s_%s" % (ephemeral_gb, os_type_with_default)
+            size = ephemeral_gb * 1024 * 1024 * 1024
+            image('disk.local').cache(fetch_func=fn,
+                                      filename=fname,
+                                      size=size,
+                                      ephemeral_size=ephemeral_gb)
+
+        for idx, eph in enumerate(driver.block_device_info_get_ephemerals(
+                block_device_info)):
+            fn = functools.partial(self._create_ephemeral,
+                                   fs_label='ephemeral%d' % idx,
+                                   os_type=instance["os_type"])
+            size = eph['size'] * 1024 * 1024 * 1024
+            fname = "ephemeral_%s_%s" % (eph['size'], os_type_with_default)
+            image(blockinfo.get_eph_disk(idx)).cache(
+                fetch_func=fn,
+                filename=fname,
+                size=size,
+                ephemeral_size=eph['size'])
+
+        if 'disk.swap' in disk_mapping:
+            mapping = disk_mapping['disk.swap']
+            swap_mb = 0
+
+            swap = driver.block_device_info_get_swap(block_device_info)
+            if driver.swap_is_usable(swap):
+                swap_mb = swap['swap_size']
+            elif (inst_type['swap'] > 0 and
+                  not block_device.volume_in_mapping(
+                    mapping['dev'], block_device_info)):
+                swap_mb = inst_type['swap']
+
+            if swap_mb > 0:
+                size = swap_mb * 1024 * 1024
+                image('disk.swap').cache(fetch_func=self._create_swap,
+                                         filename="swap_%s" % swap_mb,
+                                         size=size,
+                                         swap_mb=swap_mb)
+
+        # Config drive
+        if configdrive.required_by(instance):
+            LOG.info(_('Using config drive'), instance=instance)
+            extra_md = {}
+            if admin_pass:
+                extra_md['admin_pass'] = admin_pass
+
+            inst_md = instance_metadata.InstanceMetadata(instance,
+                content=files, extra_md=extra_md, network_info=network_info)
+            with configdrive.ConfigDriveBuilder(instance_md=inst_md) as cdb:
+                configdrive_path = basepath(fname='disk.config')
+                LOG.info(_('Creating config drive at %(path)s'),
+                         {'path': configdrive_path}, instance=instance)
+
+                try:
+                    cdb.make_drive(configdrive_path)
+                except processutils.ProcessExecutionError as e:
+                    with excutils.save_and_reraise_exception():
+                        LOG.error(_('Creating config drive failed '
+                                  'with error: %s'),
+                                  e, instance=instance)
+
+        # File injection only if needed
+        elif inject_files and CONF.libvirt_inject_partition != -2:
+
+            if booted_from_volume:
+                LOG.warn(_('File injection into a boot from volume '
+                           'instance is not supported'), instance=instance)
+
+            target_partition = None
+            if not instance['kernel_id']:
+                target_partition = CONF.libvirt_inject_partition
+                if target_partition == 0:
+                    target_partition = None
+            if CONF.libvirt_type == 'lxc':
+                target_partition = None
+
+            if CONF.libvirt_inject_key and instance['key_data']:
+                key = str(instance['key_data'])
+            else:
+                key = None
+
+            net = netutils.get_injected_network_template(network_info)
+
+            metadata = instance.get('metadata')
+
+            if not CONF.libvirt_inject_password:
+                admin_pass = None
+
+            if any((key, net, metadata, admin_pass, files)):
+                # If we're not using config_drive, inject into root fs
+                injection_path = image('disk').path
+                img_id = instance['image_ref']
+
+                for inj, val in [('key', key),
+                                 ('net', net),
+                                 ('metadata', metadata),
+                                 ('admin_pass', admin_pass),
+                                 ('files', files)]:
+                    if val:
+                        LOG.info(_('Injecting %(inj)s into image '
+                                   '%(img_id)s'),
+                                 {'inj': inj, 'img_id': img_id},
+                                 instance=instance)
+                try:
+                    disk.inject_data(injection_path,
+                                     key, net, metadata, admin_pass, files,
+                                     partition=target_partition,
+                                     use_cow=CONF.use_cow_images,
+                                     mandatory=('files',))
+                except Exception as e:
+                    with excutils.save_and_reraise_exception():
+                        LOG.error(_('Error injecting data into image '
+                                    '%(img_id)s (%(e)s)'),
+                                  {'img_id': img_id, 'e': e},
+                                  instance=instance)
+
+        if CONF.libvirt_type == 'uml':
+            libvirt_utils.chown(image('disk').path, 'root')
 
     def live_snapshot(self, context, instance, name, update_task_state):
         if instance['name'] not in self.instances:
