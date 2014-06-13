@@ -79,7 +79,7 @@ class FakeInstance(object):
         return getattr(self, key)
 
 
-class FakeDriver(driver.ComputeDriver):
+class QemuWinDriver(driver.ComputeDriver):
     capabilities = {
         "has_imagecache": True,
         "supports_recreate": True,
@@ -88,7 +88,7 @@ class FakeDriver(driver.ComputeDriver):
     """Fake hypervisor driver."""
 
     def __init__(self, virtapi, read_only=False):
-        super(FakeDriver, self).__init__(virtapi)
+        super(QemuWinDriver, self).__init__(virtapi)
         print "fogbow.FakeDriver initialized"
         LOG.info("fogbow.FakeDriver initialized")
         self.instances = {}
