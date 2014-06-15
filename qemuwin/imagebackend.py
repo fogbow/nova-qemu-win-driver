@@ -30,7 +30,7 @@ from nova.openstack.common import jsonutils
 from nova.openstack.common import log as logging
 from nova import utils
 from nova.virt.disk import api as disk
-from nova.virt import images
+from nova.virt.qemuwin import images
 from nova.virt.qemuwin import config as vconfig
 from nova.virt.qemuwin import utils as libvirt_utils
 
@@ -68,7 +68,7 @@ __imagebackend_opts = [
 
 CONF = cfg.CONF
 CONF.register_opts(__imagebackend_opts)
-CONF.import_opt('base_dir_name', 'nova.virt.libvirt.imagecache')
+CONF.import_opt('base_dir_name', 'nova.virt.qemuwin.imagecache')
 CONF.import_opt('preallocate_images', 'nova.virt.driver')
 
 LOG = logging.getLogger(__name__)

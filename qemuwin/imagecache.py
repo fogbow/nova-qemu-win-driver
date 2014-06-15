@@ -37,7 +37,7 @@ from nova.openstack.common.gettextutils import _
 from nova.openstack.common import jsonutils
 from nova.openstack.common import log as logging
 from nova import utils
-from nova.virt.libvirt import utils as virtutils
+from nova.virt.qemuwin import utils as virtutils
 
 LOG = logging.getLogger(__name__)
 
