@@ -323,7 +323,8 @@ class LibvirtGenericVIFDriver(LibvirtBaseVIFDriver):
                    'vif': vif})
 
         #TODO Fix network driver
-        vif_type = network_model.VIF_TYPE_OVS
+        # if vif_type == network_model.VIF_TYPE_BINDING_FAILED:
+        #    vif_type = network_model.VIF_TYPE_OVS
 
         if vif_type is None:
             raise exception.NovaException(
