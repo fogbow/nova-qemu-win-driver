@@ -380,8 +380,8 @@ class QemuWinDriver(driver.ComputeDriver):
     def getText(dom, elName):
       return getEl(dom, elName).childNodes[0].nodeValue
 
-    def qemuCommandNew():
-      return ['qemu-system-i386.exe']
+    def qemuCommandNew(arch):
+      return ['qemu-system-' + arch + '.exe']
 
     def qemuCommandAddArg(cmd, argName, argValue):
       cmd.append(argName)
@@ -394,8 +394,10 @@ class QemuWinDriver(driver.ComputeDriver):
     def startQemuInstance(instance):
       instance_dir = libvirt_utils.get_instance_path(instance)
       xml_path = os.path.join(instance_dir, 'libvirt.xml')
-      cmd = qemuCommandNew()
       dom = minidom.parse(xml_path)
+      cpu = getEl(dom, 'cpu')
+      arch = getText(cpu, 'arch')
+      cmd = qemuCommandNew(arch)
 
       memory = int(getText(dom, 'memory'))/1024
       qemuCommandAddArg(cmd, '-m', str(memory))
@@ -468,7 +470,7 @@ class QemuWinDriver(driver.ComputeDriver):
                           disk_info, image_meta,
                           block_device_info=block_device_info,
                           write_to_disk=True)
-        
+
         startQemuInstance(instance)
         fake_instance = FakeInstance(name, state)
         self.instances[name] = fake_instance
