@@ -43,6 +43,7 @@ from eventlet import greenthread
 from eventlet import patcher
 from eventlet import tpool
 from eventlet import util as eventlet_util
+from xml.dom import minidom
 from lxml import etree
 from oslo.config import cfg
 
@@ -370,13 +371,87 @@ class QemuWinDriver(driver.ComputeDriver):
 
         return hasDirectIO
 
-  # initing qemu
-  # qemu-system-i386.exe -m 64 -smp 1,sockets=1,cores=1,threads=1 -name instance-00000093 -uuid 964b523e-3da0-4770-a774-c08620b18603 -drive file=cirros-0.3.0-i386-disk.img,id=drive-virtio-disk0,if=none -device virtio-blk-pci,bus=pci.0,addr=0x4,drive=drive-virtio-disk0,id=virtio-disk0,bootindex=1 -chardev file,id=charserial0,path=console.log -device isa-serial,chardev=charserial0,id=serial0 -netdev user,id=hostnet0 -device virtio-net-pci,netdev=hostnet0,id=net0,mac=fa:16:3e:8a:35:33,bus=pci.0,addr=0x3 -smbios type=1,manufacturer=OpenStackFoundation,product=OpenStackNova,version=2013.2.4,serial=74cd34f4-f412-4438-8172-f44faadfa516,uuid=964b523e-3da0-4770-a774-c08620b18603 -usb -vnc 127.0.0.1:8 -k en-us -vga cirrus -device virtio-balloon-pci,id=balloon0,bus=pci.0,addr=0x5  -rtc base=utc,driftfix=slew -no-shutdown
+    def getEl(dom, elName):
+      return dom.getElementsByTagName(elName)[0]
+
+    def getEls(dom, elsName):
+      return dom.getElementsByTagName(elsName)
+
+    def getText(dom, elName):
+      return getEl(dom, elName).childNodes[0].nodeValue
+
+    def qemuCommandNew():
+      return ['qemu-system-i386.exe']
+
+    def qemuCommandAddArg(cmd, argName, argValue):
+      cmd.append(argName)
+      cmd.append(argValue)
+
+    def qemuCommandStr(cmd):
+      delimiter = ' '
+      return delimiter.join(cmd)
+
+    def startQemuInstance(instance):
+      instance_dir = libvirt_utils.get_instance_path(instance)
+      xml_path = os.path.join(instance_dir, 'libvirt.xml')
+      cmd = qemuCommandNew()
+      dom = minidom.parse(xml_path)
+
+      memory = int(getText(dom, 'memory'))/1024
+      qemuCommandAddArg(cmd, '-m', str(memory))
+      qemuCommandAddArg(cmd, '-smp', '1,sockets=1,cores=1,threads=1')
+
+      name = getText(dom, 'name')
+      qemuCommandAddArg(cmd, '-name', name)
+
+      uuid = getText(dom, 'uuid')
+      qemuCommandAddArg(cmd, '-uuid', uuid)
+
+      vcpu = getText(dom, 'vcpu')
+
+      devices = getEl(dom, 'devices')
+      disk = getEl(devices, 'disk')
+      diskSource = getEl(disk, 'source')
+      qemuCommandAddArg(cmd, '-drive', 'file=' + diskSource.attributes['file'].value + ',id=drive-virtio-disk0,if=none')
+
+      qemuCommandAddArg(cmd, '-device', 'virtio-blk-pci,bus=pci.0,addr=0x4,drive=drive-virtio-disk0,id=virtio-disk0,bootindex=1')
+
+      serial = getEl(devices, 'serial')
+      serialSource = getEl(serial, 'source')
+      qemuCommandAddArg(cmd, '-chardev', 'file,id=charserial0,path=' + serialSource.attributes['path'].value)
+
+      interface = getEl(devices, 'interface')
+      mac = getEl(interface, 'mac')
+      qemuCommandAddArg(cmd, '-netdev', 'user,id=hostnet0')
+      qemuCommandAddArg(cmd, '-device', 'virtio-net-pci,netdev=hostnet0,id=net0,mac=' + mac.attributes['address'].value + ',bus=pci.0,addr=0x3')
+
+      sysinfo = getEl(dom, 'sysinfo')
+      sysinfoValue = 'type=1'
+
+      system = getEl(sysinfo, 'system')
+      systemEntries = getEls(system, 'entry')
+      for entry in systemEntries:
+          sysinfoValue += ',' + entry.attributes['name'].value + '=' + entry.childNodes[0].nodeValue
+      qemuCommandAddArg(cmd, '-' + sysinfo.attributes['type'].value, sysinfoValue.replace(' ', ''))
+
+      qemuCommandAddArg(cmd, '-usb', '')
+
+      graphics = getEl(devices, 'graphics')
+      qemuCommandAddArg(cmd, '-vnc', graphics.attributes['listen'].value + ':8')
+      qemuCommandAddArg(cmd, '-k', graphics.attributes['keymap'].value)
+      qemuCommandAddArg(cmd, '-vga', 'cirrus')
+
+      qemuCommandAddArg(cmd, '-device', 'virtio-balloon-pci,id=balloon0,bus=pci.0,addr=0x5')
+      qemuCommandAddArg(cmd, '-rtc', 'base=utc,driftfix=slew')
+      qemuCommandAddArg(cmd, '-no-shutdown', '')
+
+      return os.system(qemuCommandStr(cmd))
+
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info=None, block_device_info=None):
         name = instance['name']
         LOG.info("qemuwin.QemuWinDriver creating %s." % name)
-        LOG.info("%s." % instance)
+        LOG.info("Instance Data %s." % instance)
         state = power_state.RUNNING
         disk_info = blockinfo.get_disk_info('qemu',
                                             instance,
@@ -393,7 +468,8 @@ class QemuWinDriver(driver.ComputeDriver):
                           disk_info, image_meta,
                           block_device_info=block_device_info,
                           write_to_disk=True)
-
+        
+        startQemuInstance(instance)
         fake_instance = FakeInstance(name, state)
         self.instances[name] = fake_instance
     
