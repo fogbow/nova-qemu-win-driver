@@ -37,6 +37,7 @@ import tempfile
 import threading
 import time
 import uuid
+import subprocess
 
 from eventlet import greenio
 from eventlet import greenthread
@@ -138,10 +139,10 @@ libvirt_opts = [
                help='Snapshot image format (valid options are : '
                     'raw, qcow2, vmdk, vdi). '
                     'Defaults to same as source image'),
-    cfg.StrOpt('libvirt_vif_driver',
+    cfg.StrOpt('qemuwin_vif_driver',
                default='nova.virt.qemuwin.vif.LibvirtGenericVIFDriver',
                help='The libvirt VIF driver to configure the VIFs.'),
-    cfg.ListOpt('libvirt_volume_drivers',
+    cfg.ListOpt('qemuwin_volume_drivers',
                 default=[
                   'iscsi=nova.virt.qemuwin.volume.LibvirtISCSIVolumeDriver',
                   'iser=nova.virt.qemuwin.volume.LibvirtISERVolumeDriver',
@@ -209,11 +210,11 @@ CONF.import_opt('live_migration_retry_count', 'nova.compute.manager')
 CONF.import_opt('vncserver_proxyclient_address', 'nova.vnc')
 CONF.import_opt('server_proxyclient_address', 'nova.spice', group='spice')
 
+MAX_CONSOLE_BYTES = 102400
+
 LOG = logging.getLogger(__name__)
 
-
 _FAKE_NODES = None
-
 
 def set_nodes(nodes):
     """Sets FakeDriver's node.list.
@@ -290,7 +291,7 @@ class QemuWinDriver(driver.ComputeDriver):
                                  "unsafe",
                                 ]
 
-        vif_class = importutils.import_class(CONF.libvirt_vif_driver)
+        vif_class = importutils.import_class(CONF.qemuwin_vif_driver)
         self.vif_driver = vif_class(None)
 
         for mode_str in CONF.disk_cachemodes:
@@ -371,83 +372,89 @@ class QemuWinDriver(driver.ComputeDriver):
 
         return hasDirectIO
 
+    @staticmethod
     def getEl(dom, elName):
-      return dom.getElementsByTagName(elName)[0]
+        return dom.getElementsByTagName(elName)[0]
 
+    @staticmethod
     def getEls(dom, elsName):
-      return dom.getElementsByTagName(elsName)
+        return dom.getElementsByTagName(elsName)
 
+    @staticmethod
     def getText(dom, elName):
-      return getEl(dom, elName).childNodes[0].nodeValue
+        return dom.getElementsByTagName(elName)[0].childNodes[0].nodeValue
 
+    @staticmethod
     def qemuCommandNew(arch):
-      return ['qemu-system-' + arch + '.exe']
+        return ['qemu-system-%s.exe' % arch]
 
+    @staticmethod
     def qemuCommandAddArg(cmd, argName, argValue):
-      cmd.append(argName)
-      cmd.append(argValue)
+        cmd.append(argName)
+        cmd.append(argValue)
 
+    @staticmethod
     def qemuCommandStr(cmd):
-      delimiter = ' '
-      return delimiter.join(cmd)
+        return ' '.join(cmd)
 
-    def startQemuInstance(instance):
-      instance_dir = libvirt_utils.get_instance_path(instance)
-      xml_path = os.path.join(instance_dir, 'libvirt.xml')
-      dom = minidom.parse(xml_path)
-      cpu = getEl(dom, 'cpu')
-      arch = getText(cpu, 'arch')
-      cmd = qemuCommandNew(arch)
+    def start_qemu_instance(self, instance):
+        instance_dir = libvirt_utils.get_instance_path(instance)
+        xml_path = os.path.join(instance_dir, 'libvirt.xml')
+        dom = minidom.parse(xml_path)
+        cpu = self.getEl(dom, 'cpu')
+        arch = self.getText(cpu, 'arch')
+        cmd = self.qemuCommandNew(arch)
 
-      memory = int(getText(dom, 'memory'))/1024
-      qemuCommandAddArg(cmd, '-m', str(memory))
-      qemuCommandAddArg(cmd, '-smp', '1,sockets=1,cores=1,threads=1')
+        memory = int(self.getText(dom, 'memory'))/1024
+        self.qemuCommandAddArg(cmd, '-m', str(memory))
+        self.qemuCommandAddArg(cmd, '-smp', '1,sockets=1,cores=1,threads=1')
 
-      name = getText(dom, 'name')
-      qemuCommandAddArg(cmd, '-name', name)
+        name = self.getText(dom, 'name')
+        self.qemuCommandAddArg(cmd, '-name', name)
 
-      uuid = getText(dom, 'uuid')
-      qemuCommandAddArg(cmd, '-uuid', uuid)
+        uuid = self.getText(dom, 'uuid')
+        self.qemuCommandAddArg(cmd, '-uuid', uuid)
 
-      vcpu = getText(dom, 'vcpu')
+        vcpu = self.getText(dom, 'vcpu')
 
-      devices = getEl(dom, 'devices')
-      disk = getEl(devices, 'disk')
-      diskSource = getEl(disk, 'source')
-      qemuCommandAddArg(cmd, '-drive', 'file=' + diskSource.attributes['file'].value + ',id=drive-virtio-disk0,if=none')
+        devices = self.getEl(dom, 'devices')
+        disk = self.getEl(devices, 'disk')
+        diskSource = self.getEl(disk, 'source')
+        self.qemuCommandAddArg(cmd, '-drive', 'file=%s,id=drive-virtio-disk0,if=none' % diskSource.attributes['file'].value)
+        self.qemuCommandAddArg(cmd, '-device', 'virtio-blk-pci,bus=pci.0,addr=0x4,drive=drive-virtio-disk0,id=virtio-disk0,bootindex=1')
 
-      qemuCommandAddArg(cmd, '-device', 'virtio-blk-pci,bus=pci.0,addr=0x4,drive=drive-virtio-disk0,id=virtio-disk0,bootindex=1')
+        serial = self.getEl(devices, 'serial')
+        serialSource = self.getEl(serial, 'source')
+        self.qemuCommandAddArg(cmd, '-chardev', 'file,id=charserial0,path=%s' % serialSource.attributes['path'].value)
+        self.qemuCommandAddArg(cmd, '-device', 'isa-serial,chardev=charserial0,id=serial0')
 
-      serial = getEl(devices, 'serial')
-      serialSource = getEl(serial, 'source')
-      qemuCommandAddArg(cmd, '-chardev', 'file,id=charserial0,path=' + serialSource.attributes['path'].value)
+        interface = self.getEl(devices, 'interface')
+        mac = self.getEl(interface, 'mac')
+        self.qemuCommandAddArg(cmd, '-netdev', 'user,id=hostnet0')
+        self.qemuCommandAddArg(cmd, '-device', 'virtio-net-pci,netdev=hostnet0,id=net0,mac=%s,bus=pci.0,addr=0x3' % mac.attributes['address'].value)
 
-      interface = getEl(devices, 'interface')
-      mac = getEl(interface, 'mac')
-      qemuCommandAddArg(cmd, '-netdev', 'user,id=hostnet0')
-      qemuCommandAddArg(cmd, '-device', 'virtio-net-pci,netdev=hostnet0,id=net0,mac=' + mac.attributes['address'].value + ',bus=pci.0,addr=0x3')
+        sysinfo = self.getEl(dom, 'sysinfo')
+        sysinfoValue = 'type=1'
 
-      sysinfo = getEl(dom, 'sysinfo')
-      sysinfoValue = 'type=1'
+        system = self.getEl(sysinfo, 'system')
+        systemEntries = self.getEls(system, 'entry')
+        for entry in systemEntries:
+            sysinfoValue += (',%s=%s' % (entry.attributes['name'].value, entry.childNodes[0].nodeValue))
+        self.qemuCommandAddArg(cmd, '-%s' % sysinfo.attributes['type'].value, sysinfoValue.replace(' ', ''))
 
-      system = getEl(sysinfo, 'system')
-      systemEntries = getEls(system, 'entry')
-      for entry in systemEntries:
-          sysinfoValue += ',' + entry.attributes['name'].value + '=' + entry.childNodes[0].nodeValue
-      qemuCommandAddArg(cmd, '-' + sysinfo.attributes['type'].value, sysinfoValue.replace(' ', ''))
+        self.qemuCommandAddArg(cmd, '-usb', '')
 
-      qemuCommandAddArg(cmd, '-usb', '')
+        graphics = self.getEl(devices, 'graphics')
+        self.qemuCommandAddArg(cmd, '-vnc', '%s:8' % graphics.attributes['listen'].value)
+        self.qemuCommandAddArg(cmd, '-k', graphics.attributes['keymap'].value)
+        self.qemuCommandAddArg(cmd, '-vga', 'cirrus')
 
-      graphics = getEl(devices, 'graphics')
-      qemuCommandAddArg(cmd, '-vnc', graphics.attributes['listen'].value + ':8')
-      qemuCommandAddArg(cmd, '-k', graphics.attributes['keymap'].value)
-      qemuCommandAddArg(cmd, '-vga', 'cirrus')
+        self.qemuCommandAddArg(cmd, '-device', 'virtio-balloon-pci,id=balloon0,bus=pci.0,addr=0x5')
+        self.qemuCommandAddArg(cmd, '-rtc', 'base=utc,driftfix=slew')
+        self.qemuCommandAddArg(cmd, '-no-shutdown', '')
 
-      qemuCommandAddArg(cmd, '-device', 'virtio-balloon-pci,id=balloon0,bus=pci.0,addr=0x5')
-      qemuCommandAddArg(cmd, '-rtc', 'base=utc,driftfix=slew')
-      qemuCommandAddArg(cmd, '-no-shutdown', '')
-
-      return os.system(qemuCommandStr(cmd))
+        LOG.debug('Cmdline: %s' % (' '.join(cmd)))
+        subprocess.Popen(self.qemuCommandStr(cmd))
 
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info=None, block_device_info=None):
@@ -471,7 +478,7 @@ class QemuWinDriver(driver.ComputeDriver):
                           block_device_info=block_device_info,
                           write_to_disk=True)
 
-        startQemuInstance(instance)
+        self.start_qemu_instance(instance)
         fake_instance = FakeInstance(name, state)
         self.instances[name] = fake_instance
     
@@ -1441,13 +1448,43 @@ class QemuWinDriver(driver.ComputeDriver):
     def interface_stats(self, instance_name, iface_id):
         return [0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L]
 
+    @staticmethod
+    def _get_xml_desc(instance):
+        xmlpath = os.path.join(libvirt_utils.get_instance_path(instance),
+                            'libvirt.xml')
+        with open(xmlpath, "r") as xmlfile:
+            return xmlfile.read()
+
     def get_console_output(self, instance):
-        return 'FAKE CONSOLE OUTPUT\nANOTHER\nLAST LINE'
+        path = self._get_console_log_path(instance)
+        if not path:
+            msg = _("Guest does not have a console available")
+            raise exception.NovaException(msg)
+       
+        with libvirt_utils.file_open(path, 'rb') as fp:
+            log_data, remaining = utils.last_bytes(fp,
+                                                   MAX_CONSOLE_BYTES)
+            if remaining > 0:
+                LOG.info(_('Truncated console log returned, %d bytes '
+                           'ignored'), remaining, instance=instance)
+            return log_data
 
     def get_vnc_console(self, instance):
-        return {'internal_access_path': 'FAKE',
-                'host': 'fakevncconsole.com',
-                'port': 6969}
+        def get_vnc_port_for_instance(instance):
+            xml = self._get_xml_desc(instance)
+            dom = xmlutils.safe_minidom_parse_string(xml)
+
+            for graphic in dom.getElementsByTagName('graphics'):
+                if graphic.getAttribute('type') == 'vnc':
+                    return graphic.getAttribute('port')
+            # NOTE(rmk): We had VNC consoles enabled but the instance in
+            # question is not actually listening for connections.
+            raise exception.ConsoleTypeUnavailable(console_type='vnc')
+
+        port = get_vnc_port_for_instance(instance)
+        host = CONF.vncserver_proxyclient_address
+
+        return {'host': host, 'port': port, 'internal_access_path': None}
 
     def get_spice_console(self, instance):
         return {'internal_access_path': 'FAKE',
