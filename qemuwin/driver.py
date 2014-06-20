@@ -208,6 +208,7 @@ CONF.import_opt('default_ephemeral_format', 'nova.virt.driver')
 CONF.import_opt('use_cow_images', 'nova.virt.driver')
 CONF.import_opt('live_migration_retry_count', 'nova.compute.manager')
 CONF.import_opt('vncserver_proxyclient_address', 'nova.vnc')
+CONF.import_opt('vncserver_listen', 'nova.vnc')
 CONF.import_opt('server_proxyclient_address', 'nova.spice', group='spice')
 
 MAX_CONSOLE_BYTES = 102400
@@ -1481,7 +1482,8 @@ class QemuWinDriver(driver.ComputeDriver):
             # question is not actually listening for connections.
             raise exception.ConsoleTypeUnavailable(console_type='vnc')
 
-        port = get_vnc_port_for_instance(instance)
+        #port = get_vnc_port_for_instance(instance)
+        port = 5908
         host = CONF.vncserver_proxyclient_address
 
         return {'host': host, 'port': port, 'internal_access_path': None}
