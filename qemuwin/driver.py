@@ -431,7 +431,7 @@ class QemuWinDriver(driver.ComputeDriver):
 
         interface = self.getEl(devices, 'interface')
         mac = self.getEl(interface, 'mac')
-        self.qemuCommandAddArg(cmd, '-netdev', 'user,id=hostnet0')
+        self.qemuCommandAddArg(cmd, '-netdev', '"user,id=hostnet0,net=169.254.169.0/24,guestfwd=tcp:169.254.169.254:80-cmd:/usr/bin/nc 192.168.50.10 8775"')
         self.qemuCommandAddArg(cmd, '-device', 'virtio-net-pci,netdev=hostnet0,id=net0,mac=%s,bus=pci.0,addr=0x3' % mac.attributes['address'].value)
 
         sysinfo = self.getEl(dom, 'sysinfo')
