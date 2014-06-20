@@ -38,6 +38,8 @@ import threading
 import time
 import uuid
 import subprocess
+import json
+import ctypes
 
 from eventlet import greenio
 from eventlet import greenthread
@@ -455,7 +457,11 @@ class QemuWinDriver(driver.ComputeDriver):
         self.qemuCommandAddArg(cmd, '-no-shutdown', '')
 
         LOG.debug('Cmdline: %s' % (' '.join(cmd)))
-        subprocess.Popen(self.qemuCommandStr(cmd))
+        qemu_process = subprocess.Popen(self.qemuCommandStr(cmd))
+        LOG.debug('QEMU command PID: %s' % qemu_process.pid)
+        state_file_path = os.path.join(instance_dir, 'state')
+        with open(state_file_path, "w") as state_file:
+            json.dump({'pid':qemu_process.pid}, state_file)
 
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info=None, block_device_info=None):
@@ -1358,6 +1364,16 @@ class QemuWinDriver(driver.ComputeDriver):
         key = instance['name']
         if key in self.instances:
             del self.instances[key]
+            instance_dir = libvirt_utils.get_instance_path(instance)
+            state_file_path = os.path.join(instance_dir, 'state')
+            with open(state_file_path, 'r') as state_file:
+                qemu_state = json.load(state_file)
+            PROCESS_TERMINATE = 1
+            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_TERMINATE, False, qemu_state['pid'])
+            ctypes.windll.kernel32.TerminateProcess(handle, -1)
+            ctypes.windll.kernel32.CloseHandle(handle)
+            time.sleep(5)
+            shutil.rmtree(instance_dir)
         else:
             LOG.warning(_("Key '%(key)s' not in instances '%(inst)s'") %
                         {'key': key,
