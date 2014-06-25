@@ -216,6 +216,7 @@ CONF.import_opt('server_proxyclient_address', 'nova.spice', group='spice')
 
 MAX_CONSOLE_BYTES = 102400
 PROCESS_TERMINATE = 1
+VNC_BASE_PORT = 5900
 
 LOG = logging.getLogger(__name__)
 
@@ -468,20 +469,10 @@ class QemuWinDriver(driver.ComputeDriver):
         with open(state_file_path, "w") as state_file:
             json.dump({'pid': qemu_process.pid, 'vnc_port': vnc_port}, state_file)
 
-    @staticmethod
-    def _next_vnc_display():
-        for display in xrange(0,100):
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                port = 5900 + display
-                result = sock.connect_ex(('127.0.0.1', port))
-                sock.shutdown()
-                sock.close()
-                if result == 0:
-                    return (display, port)
-            except Exception:
-                pass
-        return None
+    def _next_vnc_display(self):
+        port = self._get_available_port(VNC_BASE_PORT, 100)
+        display = port - VNC_BASE_PORT
+        return (display, port)
 
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info=None, block_device_info=None):
@@ -1311,6 +1302,20 @@ class QemuWinDriver(driver.ComputeDriver):
         if instance['name'] not in self.instances:
             raise exception.InstanceNotRunning(instance_id=instance['uuid'])
         update_task_state(task_state=task_states.IMAGE_UPLOADING)
+
+    @staticmethod
+    def _get_available_port(initial_port, max_tries):
+        for port in xrange(initial_port, initial_port + max_tries):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                result = sock.connect_ex(('127.0.0.1', port))
+                sock.shutdown()
+                sock.close()
+                if result == 0:
+                    return port
+            except Exception:
+                pass
+        return None
 
     def reboot(self, context, instance, network_info, reboot_type,
                block_device_info=None, bad_volumes_callback=None):
