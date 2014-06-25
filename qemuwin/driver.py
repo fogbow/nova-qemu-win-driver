@@ -218,6 +218,11 @@ CONF.import_opt('server_proxyclient_address', 'nova.spice', group='spice')
 MAX_CONSOLE_BYTES = 102400
 PROCESS_TERMINATE = 1
 VNC_BASE_PORT = 5900
+QMP_CAPABILITY_WAIT = 3
+QMP_REBOOT_COMMAND = 'system_reset'
+QMP_SUSPEND_COMMAND = 'stop'
+QMP_RESUME_COMMAND = 'cont'
+QMP_STOP_COMMAND = 'quit'
 
 LOG = logging.getLogger(__name__)
 
@@ -462,7 +467,7 @@ class QemuWinDriver(driver.ComputeDriver):
         self.qemuCommandAddArg(cmd, '-rtc', 'base=utc,driftfix=slew')
         self.qemuCommandAddArg(cmd, '-no-shutdown', '')
 
-        qmp_port = _get_ephemeral_port()
+        qmp_port = self._get_ephemeral_port()
         self.qemuCommandAddArg(cmd, '-qmp', 'tcp:127.0.0.1:%s,server,nowait,nodelay' % (qmp_port))
 
         LOG.debug('Cmdline: %s' % (' '.join(cmd)))
@@ -1335,18 +1340,29 @@ class QemuWinDriver(driver.ComputeDriver):
 
     def _get_qmp_connection(self, instance):
         try:
-          s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
           state = self._get_instance_state(instance)
-          result = s.connect_ex(('127.0.0.1', state['port']))
-          if result == 0:
-            return s
+          if (state is not None):
+              s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+              result = s.connect_ex(('127.0.0.1', state['port']))
+              if result == 0:
+                  return s
         except Exception:
           pass
         return None
 
+    def _run_qmp_command(self, instance, command, arguments=None):
+        s = self._get_qmp_connection(instance)
+        s.sendall('{"execute": "qmp_capabilities"}')
+        time.sleep(QMP_CAPABILITY_WAIT)
+        if arguments is not None:
+            s.sendall('{"execute": "quit", "arguments": "%s"}' % (command, arguments))
+        else:
+            s.sendall('{"execute": "%s"}' % (command))
+        s.close()
+
     def reboot(self, context, instance, network_info, reboot_type,
                block_device_info=None, bad_volumes_callback=None):
-        pass
+        self._run_qmp_command(instance, QMP_REBOOT_COMMAND)
 
     @staticmethod
     def get_host_ip_addr():
@@ -1406,10 +1422,10 @@ class QemuWinDriver(driver.ComputeDriver):
         pass
 
     def suspend(self, instance):
-        pass
+        self._run_qmp_command(instance, QMP_SUSPEND_COMMAND)
 
     def resume(self, context, instance, network_info, block_device_info=None):
-        pass
+        self._run_qmp_command(instance, QMP_RESUME_COMMAND)
 
     def _get_instance_state(self, instance):
         instance_dir = libvirt_utils.get_instance_path(instance)
