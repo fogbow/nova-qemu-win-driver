@@ -218,6 +218,7 @@ MAX_CONSOLE_BYTES = 102400
 PROCESS_TERMINATE = 1
 VNC_BASE_PORT = 5900
 QMP_CAPABILITY_WAIT = 3
+SOCKET_NOT_BOUND = 10061
 QMP_REBOOT_COMMAND = 'system_reset'
 QMP_SUSPEND_COMMAND = 'stop'
 QMP_RESUME_COMMAND = 'cont'
@@ -441,7 +442,8 @@ class QemuWinDriver(driver.ComputeDriver):
 
         interface = self.getEl(devices, 'interface')
         mac = self.getEl(interface, 'mac')
-        self.qemuCommandAddArg(cmd, '-netdev', '"user,id=hostnet0,net=169.254.169.0/24,guestfwd=tcp:169.254.169.254:80-tcp:192.168.50.10:8775"')
+        #self.qemuCommandAddArg(cmd, '-netdev', '"user,id=hostnet0,net=169.254.169.0/24,guestfwd=tcp:169.254.169.254:80-tcp:192.168.50.10:8775"')
+        self.qemuCommandAddArg(cmd, '-netdev', '"user,id=hostnet0"')
         self.qemuCommandAddArg(cmd, '-device', 'virtio-net-pci,netdev=hostnet0,id=net0,mac=%s,bus=pci.0,addr=0x3' % mac.attributes['address'].value)
 
         sysinfo = self.getEl(dom, 'sysinfo')
@@ -470,7 +472,6 @@ class QemuWinDriver(driver.ComputeDriver):
         self.qemuCommandAddArg(cmd, '-qmp', 'tcp:127.0.0.1:%s,server,nowait,nodelay' % (qmp_port))
 
         LOG.debug('Cmdline: %s' % (' '.join(cmd)))
-        LOG.debug('QEMU command PID: %s' % qemu_process.pid)
 
         qemu_process = subprocess.Popen(self.qemuCommandStr(cmd))
         state_file_path = os.path.join(instance_dir, 'state')
@@ -1329,9 +1330,8 @@ class QemuWinDriver(driver.ComputeDriver):
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 result = sock.connect_ex(('127.0.0.1', port))
-                sock.shutdown()
                 sock.close()
-                if result == 0:
+                if result == SOCKET_NOT_BOUND:
                     return port
             except Exception:
                 pass
