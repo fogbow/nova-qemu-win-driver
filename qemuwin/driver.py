@@ -1447,8 +1447,9 @@ class QemuWinDriver(driver.ComputeDriver):
         state = self._get_instance_state(instance)
         if (state is not None):
             _kill(state['pid'])
-        shutil.rmtree(libvirt_utils.get_instance_path(instance))
-        del self.instances[instance['name']]
+        shutil.rmtree(libvirt_utils.get_instance_path(instance), True)
+        if (instance['name'] in self.instances):
+            del self.instances[instance['name']]
 
     def attach_volume(self, context, connection_info, instance, mountpoint,
                       encryption=None):
