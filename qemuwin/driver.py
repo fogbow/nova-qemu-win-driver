@@ -92,6 +92,7 @@ from nova.virt.qemuwin import utils as libvirt_utils
 from nova.virt import netutils
 from nova import volume
 from nova.volume import encryptors
+from ctypes.windll import kernel32
 
 libvirt_opts = [
     cfg.StrOpt('rescue_image_id',
@@ -1387,16 +1388,24 @@ class QemuWinDriver(driver.ComputeDriver):
     def _get_instance_state(self, instance):
         instance_dir = libvirt_utils.get_instance_path(instance)
         state_file_path = os.path.join(instance_dir, 'state')
-        with open(state_file_path, 'r') as state_file:
-            return json.load(state_file)
-
+        try:
+            with open(state_file_path, 'r') as state_file:
+                return json.load(state_file)
+        except Exception:
+            return None
+    
     def destroy(self, instance, network_info, block_device_info=None,
                 destroy_disks=True, context=None):
+
+        def _kill(pid):
+            handle = kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
+            kernel32.TerminateProcess(handle, -1)
+            kernel32.CloseHandle(handle)
+            time.sleep(5)
+
         state = self._get_instance_state(instance)
-        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_TERMINATE, False, state['pid'])
-        ctypes.windll.kernel32.TerminateProcess(handle, -1)
-        ctypes.windll.kernel32.CloseHandle(handle)
-        time.sleep(5)
+        if (state is not None):
+            _kill(state['pid'])
         shutil.rmtree(libvirt_utils.get_instance_path(instance))
         del self.instances[instance['name']]
 
