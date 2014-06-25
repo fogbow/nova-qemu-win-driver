@@ -461,13 +461,16 @@ class QemuWinDriver(driver.ComputeDriver):
         self.qemuCommandAddArg(cmd, '-rtc', 'base=utc,driftfix=slew')
         self.qemuCommandAddArg(cmd, '-no-shutdown', '')
 
+        qmp_port = _get_ephemeral_port()
+        self.qemuCommandAddArg(cmd, '-qmp', 'tcp:127.0.0.1:%s,server,nowait,nodelay' % (qmp_port))
+
         LOG.debug('Cmdline: %s' % (' '.join(cmd)))
         LOG.debug('QEMU command PID: %s' % qemu_process.pid)
 
         qemu_process = subprocess.Popen(self.qemuCommandStr(cmd))
         state_file_path = os.path.join(instance_dir, 'state')
         with open(state_file_path, "w") as state_file:
-            json.dump({'pid': qemu_process.pid, 'vnc_port': vnc_port}, state_file)
+            json.dump({'pid': qemu_process.pid, 'vnc_port': vnc_port, 'qmp_port': qmp_port}, state_file)
 
     def _next_vnc_display(self):
         port = self._get_available_port(VNC_BASE_PORT, 100)
@@ -1304,6 +1307,18 @@ class QemuWinDriver(driver.ComputeDriver):
         update_task_state(task_state=task_states.IMAGE_UPLOADING)
 
     @staticmethod
+    def _get_ephemeral_port():
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            result = sock.bind(('127.0.0.1', 0))
+            port = sock.getsockname()[1]
+            sock.shutdown()
+            sock.close()
+            return port
+        except Exception:
+            return None
+
+    @staticmethod
     def _get_available_port(initial_port, max_tries):
         for port in xrange(initial_port, initial_port + max_tries):
             try:
@@ -1315,6 +1330,17 @@ class QemuWinDriver(driver.ComputeDriver):
                     return port
             except Exception:
                 pass
+        return None
+
+    def _get_qmp_connection(self, instance):
+        try:
+          s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          state = self._get_instance_state(instance)
+          result = s.connect_ex(('127.0.0.1', state['port']))
+          if result == 0:
+            return s
+        except Exception:
+          pass
         return None
 
     def reboot(self, context, instance, network_info, reboot_type,
