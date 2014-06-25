@@ -40,6 +40,7 @@ import uuid
 import subprocess
 import json
 import ctypes
+import socket
 
 from eventlet import greenio
 from eventlet import greenthread
@@ -214,6 +215,7 @@ CONF.import_opt('vncserver_listen', 'nova.vnc')
 CONF.import_opt('server_proxyclient_address', 'nova.spice', group='spice')
 
 MAX_CONSOLE_BYTES = 102400
+PROCESS_TERMINATE = 1
 
 LOG = logging.getLogger(__name__)
 
@@ -433,7 +435,7 @@ class QemuWinDriver(driver.ComputeDriver):
 
         interface = self.getEl(devices, 'interface')
         mac = self.getEl(interface, 'mac')
-        self.qemuCommandAddArg(cmd, '-netdev', '"user,id=hostnet0,net=169.254.169.0/24,guestfwd=tcp:169.254.169.254:80-cmd:/usr/bin/nc 192.168.50.10 8775"')
+        self.qemuCommandAddArg(cmd, '-netdev', '"user,id=hostnet0,net=169.254.169.0/24,guestfwd=tcp:169.254.169.254:80-tcp:192.168.50.10:8775"')
         self.qemuCommandAddArg(cmd, '-device', 'virtio-net-pci,netdev=hostnet0,id=net0,mac=%s,bus=pci.0,addr=0x3' % mac.attributes['address'].value)
 
         sysinfo = self.getEl(dom, 'sysinfo')
@@ -448,7 +450,9 @@ class QemuWinDriver(driver.ComputeDriver):
         self.qemuCommandAddArg(cmd, '-usb', '')
 
         graphics = self.getEl(devices, 'graphics')
-        self.qemuCommandAddArg(cmd, '-vnc', '%s:8' % graphics.attributes['listen'].value)
+        display, vnc_port = self._next_vnc_display()
+
+        self.qemuCommandAddArg(cmd, '-vnc', '%s:%s' % (graphics.attributes['listen'].value, display))
         self.qemuCommandAddArg(cmd, '-k', graphics.attributes['keymap'].value)
         self.qemuCommandAddArg(cmd, '-vga', 'cirrus')
 
@@ -457,11 +461,27 @@ class QemuWinDriver(driver.ComputeDriver):
         self.qemuCommandAddArg(cmd, '-no-shutdown', '')
 
         LOG.debug('Cmdline: %s' % (' '.join(cmd)))
-        qemu_process = subprocess.Popen(self.qemuCommandStr(cmd))
         LOG.debug('QEMU command PID: %s' % qemu_process.pid)
+
+        qemu_process = subprocess.Popen(self.qemuCommandStr(cmd))
         state_file_path = os.path.join(instance_dir, 'state')
         with open(state_file_path, "w") as state_file:
-            json.dump({'pid':qemu_process.pid}, state_file)
+            json.dump({'pid': qemu_process.pid, 'vnc_port': vnc_port}, state_file)
+
+    @staticmethod
+    def _next_vnc_display():
+        for display in xrange(0,100):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                port = 5900 + display
+                result = sock.connect_ex(('127.0.0.1', port))
+                sock.shutdown()
+                sock.close()
+                if result == 0:
+                    return (display, port)
+            except Exception:
+                pass
+        return None
 
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info=None, block_device_info=None):
@@ -1359,25 +1379,21 @@ class QemuWinDriver(driver.ComputeDriver):
     def resume(self, context, instance, network_info, block_device_info=None):
         pass
 
+    def _get_instance_state(self, instance):
+        instance_dir = libvirt_utils.get_instance_path(instance)
+        state_file_path = os.path.join(instance_dir, 'state')
+        with open(state_file_path, 'r') as state_file:
+            return json.load(state_file)
+
     def destroy(self, instance, network_info, block_device_info=None,
                 destroy_disks=True, context=None):
-        key = instance['name']
-        if key in self.instances:
-            del self.instances[key]
-            instance_dir = libvirt_utils.get_instance_path(instance)
-            state_file_path = os.path.join(instance_dir, 'state')
-            with open(state_file_path, 'r') as state_file:
-                qemu_state = json.load(state_file)
-            PROCESS_TERMINATE = 1
-            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_TERMINATE, False, qemu_state['pid'])
-            ctypes.windll.kernel32.TerminateProcess(handle, -1)
-            ctypes.windll.kernel32.CloseHandle(handle)
-            time.sleep(5)
-            shutil.rmtree(instance_dir)
-        else:
-            LOG.warning(_("Key '%(key)s' not in instances '%(inst)s'") %
-                        {'key': key,
-                         'inst': self.instances}, instance=instance)
+        state = self._get_instance_state(instance)
+        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_TERMINATE, False, state['pid'])
+        ctypes.windll.kernel32.TerminateProcess(handle, -1)
+        ctypes.windll.kernel32.CloseHandle(handle)
+        time.sleep(5)
+        shutil.rmtree(libvirt_utils.get_instance_path(instance))
+        del self.instances[instance['name']]
 
     def attach_volume(self, context, connection_info, instance, mountpoint,
                       encryption=None):
@@ -1487,21 +1503,9 @@ class QemuWinDriver(driver.ComputeDriver):
             return log_data
 
     def get_vnc_console(self, instance):
-        def get_vnc_port_for_instance(instance):
-            xml = self._get_xml_desc(instance)
-            dom = xmlutils.safe_minidom_parse_string(xml)
-
-            for graphic in dom.getElementsByTagName('graphics'):
-                if graphic.getAttribute('type') == 'vnc':
-                    return graphic.getAttribute('port')
-            # NOTE(rmk): We had VNC consoles enabled but the instance in
-            # question is not actually listening for connections.
-            raise exception.ConsoleTypeUnavailable(console_type='vnc')
-
-        #port = get_vnc_port_for_instance(instance)
-        port = 5908
+        state = self._get_instance_state(instance)
+        port = state['vnc_port']
         host = CONF.vncserver_proxyclient_address
-
         return {'host': host, 'port': port, 'internal_access_path': None}
 
     def get_spice_console(self, instance):
