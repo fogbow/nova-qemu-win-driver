@@ -1318,7 +1318,6 @@ class QemuWinDriver(driver.ComputeDriver):
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             result = sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
-            sock.shutdown()
             sock.close()
             return port
         except Exception:
