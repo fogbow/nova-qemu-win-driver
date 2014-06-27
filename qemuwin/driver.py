@@ -224,6 +224,7 @@ QMP_SUSPEND_COMMAND = 'stop'
 QMP_RESUME_COMMAND = 'cont'
 QMP_STOP_COMMAND = 'quit'
 QMP_SHUTDOWN_COMMAND = 'system_powerdown'
+QMP_MACHINE_STATUS = 'query-status'
 
 LOG = logging.getLogger(__name__)
 
@@ -1346,30 +1347,42 @@ class QemuWinDriver(driver.ComputeDriver):
             state = self._get_instance_state(instance)
             if (state is not None):
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                result = s.connect_ex(('127.0.0.1', state['qmp_port']))
-                if result == 0:
-                    return s
+                s.connect(('127.0.0.1', state['qmp_port']))
+                return s
         except Exception, e:
             pass
         return None
 
-    def _run_qmp_command(self, instance, command, arguments=None):
+    def _run_qmp_command(self, instance, command, arguments=None, suppressOutput=False):
         LOG.debug('QEMUWINDRIVER: Running QMP command %s on instance %s' % (command, instance['name']))
         s = self._get_qmp_connection(instance)
         if s is not None:
             s.sendall('{"execute": "qmp_capabilities"}')
             time.sleep(QMP_CAPABILITY_WAIT)
+            capabilitiesOuput = s.recv(1024)
             if arguments is not None:
                 s.sendall('{"execute": "quit", "arguments": "%s"}' % (command, arguments))
             else:
                 s.sendall('{"execute": "%s"}' % (command))
+            commandOuput = None
+            if not suppressOutput:
+                commandOuput = s.recv(1024)
+                LOG.debug('QEMUWINDRIVER: QMP command output: %s' % (commandOuput))
             s.close()
+            return commandOuput
         else:
             LOG.debug('QEMUWINDRIVER: Could not run QMP command because socket failed')
 
+    def _get_machine_status(self, instance):
+        json_string = self._run_qmp_command(instance, QMP_MACHINE_STATUS)
+        machine_status = json.loads(json_string)
+        # returns two fields (running, status)
+        # running is boolean, true if running or false if not
+        # status is a string with values like running, paused, shutdown
+        return (machine_status['return']['running'], machine_status['return']['status'])
+
     def reboot(self, context, instance, network_info, reboot_type,
                block_device_info=None, bad_volumes_callback=None):
-        LOG.debug('QEMUWINDRIVER rebooting instance %s' % (instance['name']))
         self._run_qmp_command(instance, QMP_REBOOT_COMMAND)
         return True
 
@@ -1413,15 +1426,23 @@ class QemuWinDriver(driver.ComputeDriver):
         pass
 
     def power_off(self, instance):
-        self._run_qmp_command(instance, QMP_SHUTDOWN_COMMAND)
-        self._run_qmp_command(instance, QMP_STOP_COMMAND)
+        running, status = self._get_machine_status(instance)
+        if running:
+            self._run_qmp_command(instance, QMP_SHUTDOWN_COMMAND)
+            running, current_status = self._get_machine_status(instance)
+            tries = 120
+            while (current_status != 'shutdown') and (tries > 0):
+                time.sleep(1)
+                running, current_status = self._get_machine_status(instance)
+                tries -= 1
+            self._run_qmp_command(instance, QMP_STOP_COMMAND)
 
     def power_on(self, context, instance, network_info, block_device_info):
         state = self._get_instance_state(instance)
         if state is not None:
             instance_dir = libvirt_utils.get_instance_path(instance)
             cmdline, vnc_port, qmp_port = self._create_qemu_machine(instance)
-            qemu_process = subprocess.Popen(self.qemuCommandStr(cmdline))
+            qemu_process = subprocess.Popen(cmdline)
             state_file_path = os.path.join(instance_dir, 'state')
             state['pid'] = qemu_process.pid
             state['qmp_port'] = qmp_port
