@@ -1435,7 +1435,7 @@ class QemuWinDriver(driver.ComputeDriver):
                 time.sleep(1)
                 running, current_status = self._get_machine_status(instance)
                 tries -= 1
-            self._run_qmp_command(instance, QMP_STOP_COMMAND)
+            self._run_qmp_command(instance, QMP_STOP_COMMAND, suppressOutput=True)
 
     def power_on(self, context, instance, network_info, block_device_info):
         state = self._get_instance_state(instance)
