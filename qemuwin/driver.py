@@ -41,6 +41,7 @@ import subprocess
 import json
 import ctypes
 import socket
+import platform
 
 from eventlet import greenio
 from eventlet import greenthread
@@ -213,6 +214,7 @@ CONF.import_opt('live_migration_retry_count', 'nova.compute.manager')
 CONF.import_opt('vncserver_proxyclient_address', 'nova.vnc')
 CONF.import_opt('vncserver_listen', 'nova.vnc')
 CONF.import_opt('server_proxyclient_address', 'nova.spice', group='spice')
+CONF.import_opt('instances_path', 'nova.compute.manager')
 
 MAX_CONSOLE_BYTES = 102400
 PROCESS_TERMINATE = 1
@@ -554,6 +556,39 @@ class QemuWinDriver(driver.ComputeDriver):
         self._create_local(target, ephemeral_size)
         disk.mkfs(os_type, fs_label, target)
 
+    def _get_host_state(self):
+        instances_path = CONF.instances_path
+        state_file_path = os.path.join(instances_path, 'state')
+        try:
+            with open(state_file_path, 'r') as state_file:
+                return json.load(state_file)
+        except Exception:
+            return None
+
+    def _create_host_state_file(self, host_state):
+        instances_path = CONF.instances_path
+        state_file_path = os.path.join(instances_path, 'state')
+        with open(state_file_path, "w") as state_file:
+            json.dump({'uuid': host_state['uuid'], 'arch': host_state['arch']}, state_file)
+
+    def create_host_state():
+        host_state = {}
+        host_state['uuid'] = self._create_host_uuid()
+        host_state['arch'] = self._get_host_arch()
+        self._create_host_state_file(host_state)
+        return host_state
+
+    @staticmethod
+    def _get_host_arch():
+        arch_bits, os_description = platform.architecture()
+        arch = 'i386'
+        if arch_bits == '64bit':
+            arch = 'x86_64'
+        return arch
+
+    def _create_host_uuid():
+        return str(uuid.uuid4())
+
     def get_host_capabilities(self):
         """Returns an instance of config.LibvirtConfigCaps representing
            the capabilities of the host.
@@ -563,12 +598,15 @@ class QemuWinDriver(driver.ComputeDriver):
         # http://blogs.technet.com/b/aaronczechowski/archive/2012/01/04/using-smbios-guid-for-importing-computer-information-for-vmware-guest.aspx
         
         if not self._caps:
+            host_state = self._get_host_state()
+            if host_state is None:
+                host_state = self.create_host_state()
             self._caps = vconfig.LibvirtConfigCaps()
             self._caps.host = vconfig.LibvirtConfigCapsHost()
-            self._caps.host.uuid = '67452301-ab89-efcd-fedc-ba9876543210'
+            self._caps.host.uuid = host_state['uuid']
             hostcpu = vconfig.LibvirtConfigGuestCPU()
             self._caps.host.cpu = hostcpu
-            hostcpu.arch = 'x86_64'
+            hostcpu.arch = host_state['arch']
             hostcpu.model = 'host-model'
             hostcpu.vendor = 'Intel'
             hostcpu.features = []
