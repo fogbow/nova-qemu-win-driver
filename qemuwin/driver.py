@@ -598,15 +598,12 @@ class QemuWinDriver(driver.ComputeDriver):
         # http://blogs.technet.com/b/aaronczechowski/archive/2012/01/04/using-smbios-guid-for-importing-computer-information-for-vmware-guest.aspx
         
         if not self._caps:
-            host_state = self._get_host_state()
-            if host_state is None:
-                host_state = self.create_host_state()
             self._caps = vconfig.LibvirtConfigCaps()
             self._caps.host = vconfig.LibvirtConfigCapsHost()
-            self._caps.host.uuid = host_state['uuid']
+            self._caps.host.uuid = '67452301-ab89-efcd-fedc-ba9876543210'
             hostcpu = vconfig.LibvirtConfigGuestCPU()
             self._caps.host.cpu = hostcpu
-            hostcpu.arch = host_state['arch']
+            hostcpu.arch = 'x86_64'
             hostcpu.model = 'host-model'
             hostcpu.vendor = 'Intel'
             hostcpu.features = []
