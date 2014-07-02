@@ -571,7 +571,7 @@ class QemuWinDriver(driver.ComputeDriver):
         with open(state_file_path, "w") as state_file:
             json.dump({'uuid': host_state['uuid'], 'arch': host_state['arch']}, state_file)
 
-    def create_host_state():
+    def create_host_state(self):
         host_state = {}
         host_state['uuid'] = self._create_host_uuid()
         host_state['arch'] = self._get_host_arch()
@@ -586,7 +586,7 @@ class QemuWinDriver(driver.ComputeDriver):
             arch = 'x86_64'
         return arch
 
-    def _create_host_uuid():
+    def _create_host_uuid(self):
         return str(uuid.uuid4())
 
     def get_host_capabilities(self):
