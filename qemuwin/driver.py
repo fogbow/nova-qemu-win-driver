@@ -202,6 +202,14 @@ libvirt_opts = [
     cfg.StrOpt('vcpu_pin_set',
                 help='Which pcpus can be used by vcpus of instance '
                      'e.g: "4-12,^8,15"'),
+    cfg.StrOpt('nova_metadata_host',
+                help='IP address used by Nova metadata server.'),
+    cfg.IntOpt('nova_metadata_port',
+                default=8775,
+                help='TCP Port used by Nova metadata server.'),
+    cfg.StrOpt('nova_metadata_shared_secret',
+                default='',
+                help='Shared secret to sign instance-id request')
     ]
 
 CONF = cfg.CONF
@@ -446,10 +454,11 @@ class QemuWinDriver(driver.ComputeDriver):
         self.qemuCommandAddArg(cmd, '-chardev', 'file,id=charserial0,path=%s' % serialSource.attributes['path'].value)
         self.qemuCommandAddArg(cmd, '-device', 'isa-serial,chardev=charserial0,id=serial0')
 
+        metadata_port, metadata_pid = self._start_metadata_proxy(instance['uuid'], instance['project_id'])
+
         interface = self.getEl(devices, 'interface')
         mac = self.getEl(interface, 'mac')
-        #self.qemuCommandAddArg(cmd, '-netdev', '"user,id=hostnet0,net=169.254.169.0/24,guestfwd=tcp:169.254.169.254:80-tcp:192.168.50.10:8775"')
-        self.qemuCommandAddArg(cmd, '-netdev', '"user,id=hostnet0"')
+        self.qemuCommandAddArg(cmd, '-netdev', '"user,id=hostnet0,net=169.254.169.0/24,guestfwd=tcp:169.254.169.254:80-tcp:127.0.0.1:%s"' % metadata_port)
         self.qemuCommandAddArg(cmd, '-device', 'virtio-net-pci,netdev=hostnet0,id=net0,mac=%s,bus=pci.0,addr=0x3' % mac.attributes['address'].value)
 
         sysinfo = self.getEl(dom, 'sysinfo')
@@ -477,16 +486,27 @@ class QemuWinDriver(driver.ComputeDriver):
         qmp_port = self._get_ephemeral_port()
         self.qemuCommandAddArg(cmd, '-qmp', 'tcp:127.0.0.1:%s,server,nowait,nodelay' % (qmp_port))
 
-        return (self.qemuCommandStr(cmd), vnc_port, qmp_port)
+        return (self.qemuCommandStr(cmd), vnc_port, qmp_port, metadata_pid)
+
+    def _start_metadata_proxy(self, instance_id, tenant_id):
+        metadata_port = self._get_ephemeral_port()
+        current_path = os.path.dirname(__file__)
+        proxy_cmd = ('python %s\metadataproxy.py --instance_id %s --tenant_id %s --metadata_server %s --metadata_port %s '
+                     '--metadata_secret "%s" --port %s' % (current_path, instance_id, tenant_id, CONF.nova_metadata_host, 
+                                                         CONF.nova_metadata_port, CONF.nova_metadata_shared_secret, metadata_port))
+        LOG.debug('metadataproxy: %s' % proxy_cmd)
+        metadata_process = subprocess.Popen(proxy_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        return metadata_port, metadata_process.pid
 
     def start_qemu_instance(self, instance):
         instance_dir = libvirt_utils.get_instance_path(instance)
-        cmdline, vnc_port, qmp_port = self._create_qemu_machine(instance)
+        cmdline, vnc_port, qmp_port, metadata_pid = self._create_qemu_machine(instance)
         LOG.debug('Cmdline: %s' % (cmdline))
         qemu_process = subprocess.Popen(cmdline)
         state_file_path = os.path.join(instance_dir, 'state')
         with open(state_file_path, "w") as state_file:
-            json.dump({'pid': qemu_process.pid, 'vnc_port': vnc_port, 'qmp_port': qmp_port}, state_file)
+            json.dump({'pid': qemu_process.pid, 'vnc_port': vnc_port, 'qmp_port': qmp_port, 
+                       'metadata_pid': metadata_pid}, state_file)
 
     def _next_vnc_display(self):
         port = self._get_available_port(VNC_BASE_PORT, 100)
@@ -503,6 +523,7 @@ class QemuWinDriver(driver.ComputeDriver):
                                             instance,
                                             block_device_info,
                                             image_meta)
+        
         self._create_image(context, instance,
                            disk_info['mapping'],
                            network_info=network_info,
@@ -1528,6 +1549,7 @@ class QemuWinDriver(driver.ComputeDriver):
         state = self._get_instance_state(instance)
         if (state is not None):
             _kill(state['pid'])
+            _kill(state['metadata_pid'])
         shutil.rmtree(libvirt_utils.get_instance_path(instance), True)
         if (instance['name'] in self.instances):
             del self.instances[instance['name']]
