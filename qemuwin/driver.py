@@ -306,8 +306,6 @@ class QemuWinDriver(driver.ComputeDriver):
         self._interfaces = {}
         self.image_backend = imagebackend.Backend(CONF.use_cow_images)
         self.disk_cachemodes = {}
-        self.volume_drivers = driver.driver_dict_from_config(
-            CONF.qemuwin_volume_drivers, self)
 
         self.valid_cachemodes = ["default",
                                  "none",
@@ -1554,83 +1552,15 @@ class QemuWinDriver(driver.ComputeDriver):
         if (instance['name'] in self.instances):
             del self.instances[instance['name']]
 
-    def volume_driver_method(self, method_name, connection_info,
-                             *args, **kwargs):
-        driver_type = connection_info.get('driver_volume_type')
-        if driver_type not in self.volume_drivers:
-            raise exception.VolumeDriverNotFound(driver_type=driver_type)
-        driver = self.volume_drivers[driver_type]
-        method = getattr(driver, method_name)
-        return method(connection_info, *args, **kwargs)
-
-    def _get_volume_encryptor(self, connection_info, encryption):
-        encryptor = encryptors.get_volume_encryptor(connection_info,
-                                                    **encryption)
-        return encryptor
-
     def attach_volume(self, context, connection_info, instance, mountpoint,
                       encryption=None):
+        """Attach the disk to the instance at mountpoint using info."""
         instance_name = instance['name']
-        machine_state = self._get_instance_state(instance)
-        disk_dev = mountpoint.rpartition("/")[2]
-        disk_info = {
-            'dev': disk_dev,
-            'bus': blockinfo.get_disk_bus_for_disk_dev(CONF.libvirt_type,
-                                                       disk_dev),
-            'type': 'disk',
-            }
-
-        # Note(cfb): If the volume has a custom block size, check that
-        #            that we are using QEMU/KVM and libvirt >= 0.10.2. The
-        #            prescence of a block size is considered mandatory by
-        #            cinder so we fail if we can't honor the request.
-        data = {}
-        if ('data' in connection_info):
-            data = connection_info['data']
-        if ('logical_block_size' in data or 'physical_block_size' in data):
-            if CONF.libvirt_type != "kvm" and CONF.libvirt_type != "qemu":
-                msg = _("Volume sets block size, but the current "
-                        "qemu hypervisor '%s' does not support custom "
-                        "block size") % CONF.libvirt_type
-                raise exception.InvalidHypervisorType(msg)
-
-        conf = self.volume_driver_method('connect_volume',
-                                         connection_info,
-                                         disk_info)
-        self.set_cache_mode(conf)
-
-        try:
-            # NOTE(vish): We can always affect config because our
-            #             domains are persistent, but we should only
-            #             affect live if the domain is running.
-            flags = libvirt.VIR_DOMAIN_AFFECT_CONFIG
-            running, status = self._get_machine_status(instance)
-            if status == power_state.RUNNING:
-                flags |= libvirt.VIR_DOMAIN_AFFECT_LIVE
-
-            # cache device_path in connection_info -- required by encryptors
-            if 'data' in connection_info:
-                connection_info['data']['device_path'] = conf.source_path
-
-            if encryption:
-                encryptor = self._get_volume_encryptor(connection_info,
-                                                       encryption)
-                encryptor.attach_volume(context, **encryption)
-
-            virt_dom.attachDeviceFlags(conf.to_xml(), flags)
-        except Exception as ex:
-            if isinstance(ex, libvirt.libvirtError):
-                errcode = ex.get_error_code()
-                if errcode == libvirt.VIR_ERR_OPERATION_FAILED:
-                    self.volume_driver_method('disconnect_volume',
-                                              connection_info,
-                                              disk_dev)
-                    raise exception.DeviceIsBusy(device=disk_dev)
-
-            with excutils.save_and_reraise_exception():
-                self.volume_driver_method('disconnect_volume',
-                                          connection_info,
-                                          disk_dev)
+        LOG.debug('QEMUWINDRIVER: volume connection info %s' % connection_info)
+        if instance_name not in self._mounts:
+            self._mounts[instance_name] = {}
+        self._mounts[instance_name][mountpoint] = connection_info
+        return True
 
     def detach_volume(self, connection_info, instance, mountpoint,
                       encryption=None):
@@ -1759,6 +1689,61 @@ class QemuWinDriver(driver.ComputeDriver):
     def refresh_provider_fw_rules(self):
         pass
 
+    def _get_host_disk_space(self):
+        drive = unicode(os.getenv("SystemDrive"))
+        freeuser = ctypes.c_int64()
+        total = ctypes.c_int64()
+        free = ctypes.c_int64()
+        ctypes.windll.kernel32.GetDiskFreeSpaceExW(drive, 
+            ctypes.byref(freeuser), 
+            ctypes.byref(total), 
+            ctypes.byref(free))
+        return (freeuser.value, total.value)
+
+    def _get_host_disk_total(self):
+        free, total = _get_host_disk_space()
+        return total
+
+    def _get_host_disk_free(self):
+        free, total = _get_host_disk_space()
+        return free
+
+    def _get_host_disk_used(self):
+        free, total = _get_host_disk_space()
+        return total - free
+
+    def _get_host_ram(self):
+        c_ulong = ctypes.c_ulong
+        class MEMORYSTATUS(ctypes.Structure):
+            _fields_ = [
+                ('dwLength', c_ulong),
+                ('dwMemoryLoad', c_ulong),
+                ('dwTotalPhys', c_ulong),
+                ('dwAvailPhys', c_ulong),
+                ('dwTotalPageFile', c_ulong),
+                ('dwAvailPageFile', c_ulong),
+                ('dwTotalVirtual', c_ulong),
+                ('dwAvailVirtual', c_ulong)
+            ]
+        memoryStatus = MEMORYSTATUS()
+        memoryStatus.dwLength = ctypes.sizeof(MEMORYSTATUS)
+        ctypes.windll.kernel32.GlobalMemoryStatus(ctypes.byref(memoryStatus))
+        mem = memoryStatus.dwTotalPhys
+        availRam = memoryStatus.dwAvailPhys
+        return (mem, availRam)
+
+    def _get_host_free_ram(self):
+        total, free = _get_host_ram()
+        return free
+
+    def _get_host_total_ram(self):
+        total, free = _get_host_ram()
+        return total
+
+    def _get_host_used_ram(self):
+        total, free = _get_host_ram()
+        return total - free
+
     def get_available_resource(self, nodename):
         """Updates compute manager resource info on ComputeNode table.
 
@@ -1768,14 +1753,19 @@ class QemuWinDriver(driver.ComputeDriver):
         if nodename not in _FAKE_NODES:
             return {}
 
+        local_gb = _get_host_disk_total / (1024 * 1024 * 1024)
+        local_gb_used = _get_host_disk_used() / (1024 * 1024 * 1024)
+        memory_mb = _get_host_total_ram() / (1024 * 1024)
+        memory_mb_used = _get_host_used_ram() / (1024 * 1024)
+
         dic = {'vcpus': 1,
-               'memory_mb': 8192,
-               'local_gb': 1028,
+               'memory_mb': memory_mb,
+               'local_gb': local_gb,
                'vcpus_used': 0,
-               'memory_mb_used': 0,
-               'local_gb_used': 0,
-               'hypervisor_type': 'fake',
-               'hypervisor_version': '1.0',
+               'memory_mb_used': memory_mb_used,
+               'local_gb_used': local_gb_used,
+               'hypervisor_type': 'fogbow',
+               'hypervisor_version': '2.1',
                'hypervisor_hostname': nodename,
                'disk_available_least': 0,
                'cpu_info': '?'}
