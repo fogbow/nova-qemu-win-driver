@@ -1701,15 +1701,15 @@ class QemuWinDriver(driver.ComputeDriver):
         return (freeuser.value, total.value)
 
     def _get_host_disk_total(self):
-        free, total = _get_host_disk_space()
+        free, total = self._get_host_disk_space()
         return total
 
     def _get_host_disk_free(self):
-        free, total = _get_host_disk_space()
+        free, total = self._get_host_disk_space()
         return free
 
     def _get_host_disk_used(self):
-        free, total = _get_host_disk_space()
+        free, total = self._get_host_disk_space()
         return total - free
 
     def _get_host_ram(self):
@@ -1733,15 +1733,15 @@ class QemuWinDriver(driver.ComputeDriver):
         return (mem, availRam)
 
     def _get_host_free_ram(self):
-        total, free = _get_host_ram()
+        total, free = self._get_host_ram()
         return free
 
     def _get_host_total_ram(self):
-        total, free = _get_host_ram()
+        total, free = self._get_host_ram()
         return total
 
     def _get_host_used_ram(self):
-        total, free = _get_host_ram()
+        total, free = self._get_host_ram()
         return total - free
 
     def get_available_resource(self, nodename):
@@ -1753,10 +1753,10 @@ class QemuWinDriver(driver.ComputeDriver):
         if nodename not in _FAKE_NODES:
             return {}
 
-        local_gb = _get_host_disk_total / (1024 * 1024 * 1024)
-        local_gb_used = _get_host_disk_used() / (1024 * 1024 * 1024)
-        memory_mb = _get_host_total_ram() / (1024 * 1024)
-        memory_mb_used = _get_host_used_ram() / (1024 * 1024)
+        local_gb = self._get_host_disk_total() / (1024 * 1024 * 1024)
+        local_gb_used = self._get_host_disk_used() / (1024 * 1024 * 1024)
+        memory_mb = self._get_host_total_ram() / (1024 * 1024)
+        memory_mb_used = self._get_host_used_ram() / (1024 * 1024)
 
         dic = {'vcpus': 1,
                'memory_mb': memory_mb,
