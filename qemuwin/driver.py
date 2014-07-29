@@ -334,7 +334,17 @@ class QemuWinDriver(driver.ComputeDriver):
         return
 
     def list_instances(self):
-        return self.instances.keys()
+      instance_dir = CONF.instances_path
+      rawlist = os.listdir(instance_dir)
+      instancelist = []
+      for element in rawlist:
+         if (element != 'locks' and element != '_base' and element != 'compute_nodes'):
+            instancelist.append(element)
+  
+      return  instancelist
+
+      
+        
 
     def plug_vifs(self, instance, network_info):
         """Plug VIFs into networks."""
@@ -1713,18 +1723,18 @@ class QemuWinDriver(driver.ComputeDriver):
         return total - free
 
     def _get_host_ram(self):
-        c_ulong = ctypes.c_ulong
+        c_ulonglong = ctypes.c_ulonglong
         class MEMORYSTATUS(ctypes.Structure):
-            _fields_ = [
-                ('dwLength', c_ulong),
-                ('dwMemoryLoad', c_ulong),
-                ('dwTotalPhys', c_ulong),
-                ('dwAvailPhys', c_ulong),
-                ('dwTotalPageFile', c_ulong),
-                ('dwAvailPageFile', c_ulong),
-                ('dwTotalVirtual', c_ulong),
-                ('dwAvailVirtual', c_ulong)
-            ]
+           fields = [
+               ('dwLength', c_ulonglong),
+               ('dwMemoryLoad', c_ulonglong),
+               ('dwTotalPhys', c_ulonglong),
+               ('dwAvailPhys', c_ulonglong),
+               ('dwTotalPageFile', c_ulonglong),
+               ('dwAvailPageFile', c_ulonglong),
+               ('dwTotalVirtual', c_ulonglong),
+               ('dwAvailVirtual', c_ulonglong)
+                ]
         memoryStatus = MEMORYSTATUS()
         memoryStatus.dwLength = ctypes.sizeof(MEMORYSTATUS)
         ctypes.windll.kernel32.GlobalMemoryStatus(ctypes.byref(memoryStatus))
