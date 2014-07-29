@@ -42,6 +42,7 @@ import json
 import ctypes
 import socket
 import platform
+import wmi
 
 from eventlet import greenio
 from eventlet import greenthread
@@ -1725,6 +1726,7 @@ class QemuWinDriver(driver.ComputeDriver):
     def _get_host_ram(self):
         c_ulonglong = ctypes.c_ulonglong
         class MEMORYSTATUS(ctypes.Structure):
+<<<<<<< HEAD
            fields = [
                ('dwLength', c_ulonglong),
                ('dwMemoryLoad', c_ulonglong),
@@ -1735,6 +1737,18 @@ class QemuWinDriver(driver.ComputeDriver):
                ('dwTotalVirtual', c_ulonglong),
                ('dwAvailVirtual', c_ulonglong)
                 ]
+=======
+            _fields_ = [
+                ('dwLength', c_ulonglong),
+                ('dwMemoryLoad', c_ulonglong),
+                ('dwTotalPhys', c_ulonglong),
+                ('dwAvailPhys', c_ulonglong),
+                ('dwTotalPageFile', c_ulonglong),
+                ('dwAvailPageFile', c_ulonglong),
+                ('dwTotalVirtual', c_ulonglong),
+                ('dwAvailVirtual', c_ulonglong)
+            ]
+>>>>>>> 40ec08251b694150c5d428cef58a297b42e230fb
         memoryStatus = MEMORYSTATUS()
         memoryStatus.dwLength = ctypes.sizeof(MEMORYSTATUS)
         ctypes.windll.kernel32.GlobalMemoryStatus(ctypes.byref(memoryStatus))
@@ -1743,15 +1757,23 @@ class QemuWinDriver(driver.ComputeDriver):
         return (mem, availRam)
 
     def _get_host_free_ram(self):
-        total, free = self._get_host_ram()
-        return free
+        comp = wmi.WMI()
+        free_ram = 0
+        for os in comp.Win32_OperatingSystem():
+            free_ram += int(os.FreePhysicalMemory)
+        return free_ram
 
     def _get_host_total_ram(self):
-        total, free = self._get_host_ram()
+        comp = wmi.WMI()
+        total = 0
+        for i in comp.Win32_ComputerSystem():
+            total += int(i.TotalPhysicalMemory)
         return total
 
     def _get_host_used_ram(self):
-        total, free = self._get_host_ram()
+        total = self._get_host_total_ram()
+        free = self._get_host_free_ram()
+        LOG.debug("QEMUWINDRIVER: free memory %s" % (free))
         return total - free
 
     def get_available_resource(self, nodename):
@@ -1767,6 +1789,8 @@ class QemuWinDriver(driver.ComputeDriver):
         local_gb_used = self._get_host_disk_used() / (1024 * 1024 * 1024)
         memory_mb = self._get_host_total_ram() / (1024 * 1024)
         memory_mb_used = self._get_host_used_ram() / (1024 * 1024)
+
+        LOG.debug('QEMUWINDRIVER: total memory %s, used memory %s' % (memory_mb, memory_mb_used))
 
         dic = {'vcpus': 1,
                'memory_mb': memory_mb,
