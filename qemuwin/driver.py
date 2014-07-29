@@ -337,11 +337,12 @@ class QemuWinDriver(driver.ComputeDriver):
 
     def list_instances(self):
       instance_dir = CONF.instances_path
-      rawlist = os.listdir(instance_dir)
+      rawlist = [x[0] for x in os.walk(instance_dir)]
       instancelist = []
       for element in rawlist:
-         if (element != 'locks' and element != '_base' and element != 'compute_nodes'):
-            instancelist.append(element)
+         for eachfile in os.listdir(element):
+           if (eachfile == 'state'):
+             instancelist.append(os.path.basename(element))
   
       return  instancelist
 
