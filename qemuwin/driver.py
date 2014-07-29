@@ -1782,7 +1782,6 @@ class QemuWinDriver(driver.ComputeDriver):
 
         LOG.debug('QEMUWINDRIVER: total memory %s, used memory %s' % (memory_mb, memory_mb_used))
         LOG.debug('QEMUWINDRIVER: Disk available least GB: %s' % (disk_available_least))
-        LOG.debug('QEMUWINDRIVER: machines now: %s' % (self.list_instances()))
 
         dic = {'vcpus': 1,
                'memory_mb': memory_mb,
@@ -1887,11 +1886,17 @@ class QemuWinDriver(driver.ComputeDriver):
         return 'disabled'
 
     def get_disk_available_least(self):
-        #qemuImgInfoOut = images.qemu_img_info('C:\\nova\\instances2\\f927cdc0-74e9-4908-91ad-c9f4eb6314b5\\disk')
-        #disk_over_commit = qemuImgInfoOut.virtual_size - qemuImgInfoOut.disk_size
-        #disk_available_least = (self._get_host_disk_free() - disk_over_commit) / (1024 ** 3)
-        #return disk_available_least
-        return 0
+        instances_path = CONF.instances_path
+        instances = self.list_instances()
+        LOG.debug('QEMUWINDRIVER: machines now: %s' % (instances))
+        disk_available_least = 0
+        for instance in instances:
+            disk_path = os.path.join(instances_path, instance, 'disk')
+            qemuImgInfoOut = images.qemu_img_info(disk_path)
+            disk_over_commit = qemuImgInfoOut.virtual_size - int(os.path.getsize(disk_path))
+            disk_available_least += (self._get_host_disk_free() - disk_over_commit) / (1024 ** 3)
+        
+        return disk_available_least
 
     def add_to_aggregate(self, context, aggregate, host, **kwargs):
         pass
