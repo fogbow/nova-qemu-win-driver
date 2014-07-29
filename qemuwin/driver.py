@@ -592,7 +592,7 @@ class QemuWinDriver(driver.ComputeDriver):
 
     def _get_host_state(self):
         instances_path = CONF.instances_path
-        state_file_path = os.path.join(instances_path, 'state')
+        state_file_path = os.path.join(instances_path, 'host_state')
         try:
             with open(state_file_path, 'r') as state_file:
                 return json.load(state_file)
@@ -601,7 +601,7 @@ class QemuWinDriver(driver.ComputeDriver):
 
     def _create_host_state_file(self, host_state):
         instances_path = CONF.instances_path
-        state_file_path = os.path.join(instances_path, 'state')
+        state_file_path = os.path.join(instances_path, 'host_state')
         with open(state_file_path, "w") as state_file:
             json.dump({'uuid': host_state['uuid'], 'arch': host_state['arch']}, state_file)
 
