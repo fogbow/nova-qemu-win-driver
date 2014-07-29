@@ -91,6 +91,7 @@ from nova.virt.qemuwin import firewall as libvirt_firewall
 from nova.virt.qemuwin import imagebackend
 from nova.virt.qemuwin import imagecache
 from nova.virt.qemuwin import utils as libvirt_utils
+from nova.virt.qemuwin import images
 from nova.virt import netutils
 from nova import volume
 from nova.volume import encryptors
@@ -1762,12 +1763,15 @@ class QemuWinDriver(driver.ComputeDriver):
         if nodename not in _FAKE_NODES:
             return {}
 
-        local_gb = self._get_host_disk_total() / (1024 * 1024 * 1024)
-        local_gb_used = self._get_host_disk_used() / (1024 * 1024 * 1024)
-        memory_mb = self._get_host_total_ram() / (1024 * 1024)
-        memory_mb_used = self._get_host_used_ram() / (1024 * 1024)
+        local_gb = self._get_host_disk_total() / (1024 ** 3)
+        local_gb_used = self._get_host_disk_used() / (1024 ** 3)
+        memory_mb = self._get_host_total_ram() / (1024 ** 2)
+        memory_mb_used = self._get_host_used_ram() / (1024 ** 2)
+
+        disk_available_least = self.get_disk_available_least()
 
         LOG.debug('QEMUWINDRIVER: total memory %s, used memory %s' % (memory_mb, memory_mb_used))
+        LOG.debug('QEMUWINDRIVER: Disk available least GB: %s' % (disk_available_least))
 
         dic = {'vcpus': 1,
                'memory_mb': memory_mb,
@@ -1775,12 +1779,21 @@ class QemuWinDriver(driver.ComputeDriver):
                'vcpus_used': 0,
                'memory_mb_used': memory_mb_used,
                'local_gb_used': local_gb_used,
-               'hypervisor_type': 'fogbow',
+               'hypervisor_type': 'qemu',
                'hypervisor_version': '2.1',
                'hypervisor_hostname': nodename,
-               'disk_available_least': 0,
+               'disk_available_least': disk_available_least,
                'cpu_info': '?'}
         return dic
+
+    def _get_guest_disk_info(self):
+        instances_path = CONF.instances_path
+        state_file_path = os.path.join(instances_path, 'state')
+        try:
+            with open(state_file_path, 'r') as state_file:
+                return json.load(state_file)
+        except Exception:
+            return None
 
     def ensure_filtering_rules_for_instance(self, instance_ref, network_info):
         return
@@ -1863,7 +1876,10 @@ class QemuWinDriver(driver.ComputeDriver):
         return 'disabled'
 
     def get_disk_available_least(self):
-        pass
+        qemuImgInfoOut = images.qemu_img_info('C:\\nova\\instances2\\f927cdc0-74e9-4908-91ad-c9f4eb6314b5\\disk')
+        disk_over_commit = qemuImgInfoOut.virtual_size - qemuImgInfoOut.disk_size
+        disk_available_least = (self._get_host_disk_free() - disk_over_commit) / (1024 ** 3)
+        return disk_available_least
 
     def add_to_aggregate(self, context, aggregate, host, **kwargs):
         pass
