@@ -238,6 +238,17 @@ QMP_STOP_COMMAND = 'quit'
 QMP_SHUTDOWN_COMMAND = 'system_powerdown'
 QMP_MACHINE_STATUS = 'query-status'
 
+# iSCSI constants
+ISCSI_CLI = 'iscsicli.exe'
+LOGIN_CMD = 'qlogintarget'
+LOGOUT_CMD = 'logouttarget'
+PERSISTENT_LOGIN_CMD = 'persistentlogintarget'
+LIST_TARGETS_CMD = 'ListTargets'
+LIST_PERSISTENT_TARGETS_CMD = 'listpersistenttargets'
+TARGET_MAPPINGS_CMD = 'reporttargetmappings'
+ADD_TARGET_PORTAL_CMD = 'QAddTargetPortal'
+COMMAND_END_MESSAGE = 'The operation completed successfully.'
+
 LOG = logging.getLogger(__name__)
 
 _FAKE_NODES = None
@@ -1565,11 +1576,91 @@ class QemuWinDriver(driver.ComputeDriver):
         if (instance['name'] in self.instances):
             del self.instances[instance['name']]
 
+    def _execute_iscsi_command(self, cmd, arguments=False):
+        if arguments:
+            p = subprocess.Popen('%s %s %s' % (ISCSI_CLI, cmd, arguments), stdout=subprocess.PIPE)
+        else:
+            p = subprocess.Popen('%s %s' % (ISCSI_CLI, cmd), stdout=subprocess.PIPE)
+        out, err = p.communicate()
+        return (out, err)
+
+    def _list_targets(self):
+        out, err = self._execute_iscsi_command(LIST_TARGETS_CMD)
+        lines = out.splitlines()
+        target_list = []
+        list_started_string = 'Targets List:'
+        list_started = False
+        for line in lines:
+            raw_line = line.strip()
+            if raw_line == COMMAND_END_MESSAGE:
+                break
+            if list_started:
+                target_list.append(raw_line)
+            if raw_line == list_started_string:
+                list_started = True
+        return target_list
+
+    def _add_target_portal(self, portal_address):
+        out, err = self._execute_iscsi_command(ADD_TARGET_PORTAL_CMD, portal_address)
+
+    def _login_target(self, target):
+        out, err = self._execute_iscsi_command(LOGIN_CMD, target)
+
+    def _logout_target(self, session_id):
+        out, err = self._execute_iscsi_command(LOGOUT_CMD, session_id)
+
+    def _connected_targets(self):
+        out, err = self._execute_iscsi_command(TARGET_MAPPINGS_CMD)
+        lines = out.splitlines()
+        is_target_data = False
+        mappings = []
+        target = {}
+        for line in lines:
+            clean_line = line.strip()
+            if clean_line.startswith('Session Id'):
+                is_target_data = True
+            if clean_line.startswith('Target Lun:') and is_target_data:
+                is_target_data = False
+                mappings.append(target)
+                target = {}
+            if is_target_data:
+                line_data = clean_line.split(' : ')
+                target[line_data[0].strip()] = line_data[1].strip()
+        return mappings
+
+    def _get_physical_drive(self, target):
+        out, err = self._execute_iscsi_command(LIST_SESSIONS_CMD)
+        lines = out.splitlines()
+        is_disk_device = False
+        is_target = False
+        for line in lines:
+            clean_line = line.strip()
+            if clean_line.startswith('Target Name'):
+                line_data = clean_line.split(' : ')
+                if line_data[1].strip() == target:
+                    is_target = True
+                else:
+                    is_target = False
+            if clean_line.startswith('Device Type'):
+                line_data = clean_line.split(' : ')
+                if line_data[1].strip() == 'Disk':
+                    is_disk_device = True
+                else:
+                    is_disk_device = False
+            if is_disk_device and is_target and clean_line.startswith('Legacy Device Name'):
+                line_data = clean_line.split(' : ')
+                return line_data[1].strip()
+
     def attach_volume(self, context, connection_info, instance, mountpoint,
                       encryption=None):
         """Attach the disk to the instance at mountpoint using info."""
         instance_name = instance['name']
         LOG.debug('QEMUWINDRIVER: volume connection info %s' % connection_info)
+        target_portal_address = connection_info['data']['target_portal'].split(':')
+        self._add_target_portal(target_portal_address[0])
+        self._login_target(connection_info['data']['target_iqn'])
+        physical_drive = self._get_physical_drive(connection_info['data']['target_iqn'])
+        LOG.debug('QEMUWINDRIVER: volume connection physical drive %s' % (physical_drive))
         if instance_name not in self._mounts:
             self._mounts[instance_name] = {}
         self._mounts[instance_name][mountpoint] = connection_info
@@ -1797,15 +1888,6 @@ class QemuWinDriver(driver.ComputeDriver):
                'cpu_info': '?'}
         return dic
 
-    def _get_guest_disk_info(self):
-        instances_path = CONF.instances_path
-        state_file_path = os.path.join(instances_path, 'state')
-        try:
-            with open(state_file_path, 'r') as state_file:
-                return json.load(state_file)
-        except Exception:
-            return None
-
     def ensure_filtering_rules_for_instance(self, instance_ref, network_info):
         return
 
@@ -1891,11 +1973,14 @@ class QemuWinDriver(driver.ComputeDriver):
         instances = self.list_instances()
         LOG.debug('QEMUWINDRIVER: machines now: %s' % (instances))
         disk_available_least = 0
-        for instance in instances:
-            disk_path = os.path.join(instances_path, instance, 'disk')
-            qemuImgInfoOut = images.qemu_img_info(disk_path)
-            disk_over_commit = qemuImgInfoOut.virtual_size - int(os.path.getsize(disk_path))
-            disk_available_least += (self._get_host_disk_free() - disk_over_commit) / (1024 ** 3)
+        try:
+            for instance in instances:
+                disk_path = os.path.join(instances_path, instance, 'disk')
+                qemuImgInfoOut = images.qemu_img_info(disk_path)
+                disk_over_commit = qemuImgInfoOut.virtual_size - int(os.path.getsize(disk_path))
+                disk_available_least += (self._get_host_disk_free() - disk_over_commit) / (1024 ** 3)
+        except Exception:
+            pass
         
         return disk_available_least
 
