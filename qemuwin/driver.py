@@ -237,6 +237,8 @@ QMP_RESUME_COMMAND = 'cont'
 QMP_STOP_COMMAND = 'quit'
 QMP_SHUTDOWN_COMMAND = 'system_powerdown'
 QMP_MACHINE_STATUS = 'query-status'
+HUMAN_MONITOR_COMMAND = 'human-monitor-command'
+COMMAND_LINE = 'command-line'
 
 # iSCSI constants
 ISCSI_CLI = 'iscsicli.exe'
@@ -244,6 +246,7 @@ LOGIN_CMD = 'qlogintarget'
 LOGOUT_CMD = 'logouttarget'
 PERSISTENT_LOGIN_CMD = 'persistentlogintarget'
 LIST_TARGETS_CMD = 'ListTargets'
+LIST_SESSIONS_CMD = 'SessionList'
 LIST_PERSISTENT_TARGETS_CMD = 'listpersistenttargets'
 TARGET_MAPPINGS_CMD = 'reporttargetmappings'
 ADD_TARGET_PORTAL_CMD = 'QAddTargetPortal'
@@ -620,6 +623,7 @@ class QemuWinDriver(driver.ComputeDriver):
         host_state = {}
         host_state['uuid'] = self._create_host_uuid()
         host_state['arch'] = self._get_host_arch()
+        host_state['next_volume_index'] = 0
         self._create_host_state_file(host_state)
         return host_state
 
@@ -1441,9 +1445,13 @@ class QemuWinDriver(driver.ComputeDriver):
             time.sleep(QMP_CAPABILITY_WAIT)
             capabilitiesOuput = s.recv(1024)
             if arguments is not None:
-                s.sendall('{"execute": "quit", "arguments": "%s"}' % (command, arguments))
+                qmp_command = '{"execute": "%s", "arguments": %s}' % (command, arguments)
+                LOG.debug('QEMUWINDRIVER: running qmp command %s' % (qmp_command))
+                s.sendall(qmp_command)
             else:
-                s.sendall('{"execute": "%s"}' % (command))
+                qmp_command = '{"execute": "%s"}' % (command)
+                LOG.debug('QEMUWINDRIVER: running qmp command %s' % (qmp_command))
+                s.sendall(qmp_command)
             commandOuput = None
             if not suppressOutput:
                 commandOuput = s.recv(1024)
@@ -1660,10 +1668,24 @@ class QemuWinDriver(driver.ComputeDriver):
         self._add_target_portal(target_portal_address[0])
         self._login_target(connection_info['data']['target_iqn'])
         physical_drive = self._get_physical_drive(connection_info['data']['target_iqn'])
+        physical_drive = physical_drive.replace("\\", "\\\\")
         LOG.debug('QEMUWINDRIVER: volume connection physical drive %s' % (physical_drive))
+        host_state = self._get_host_state()
+        if host_state is None:
+            host_state = self.create_host_state()
+        DRIVEID = 'drive-scsi0-0-0-%s' % (host_state['next_volume_index'])
+        DEVICEID = 'scsi0-0-0-%s' % (host_state['next_volume_index'])
+        DRIVE_ADD = 'drive_add 10 file=%s,if=none,id=%s' % (physical_drive, DRIVEID)
+        DEVICE_ADD = 'device_add usb-storage,bus=usb.0,drive=%s,id=%s' % (DRIVEID, DEVICEID)
+        result_drive_add = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, DRIVE_ADD))
+        LOG.debug('QEMUWINDRIVER: attach volume drive add %s' % (result_drive_add))
+        result_device_add = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, DEVICE_ADD))
+        LOG.debug('QEMUWINDRIVER: attach volume device add %s' % (result_device_add))
         if instance_name not in self._mounts:
             self._mounts[instance_name] = {}
         self._mounts[instance_name][mountpoint] = connection_info
+        host_state['next_volume_index'] = (int(host_state['next_volume_index']) + 1)
+        self._create_host_state_file(host_state)
         return True
 
     def detach_volume(self, connection_info, instance, mountpoint,
