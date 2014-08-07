@@ -523,15 +523,19 @@ class QemuWinDriver(driver.ComputeDriver):
         metadata_process = subprocess.Popen(proxy_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         return metadata_port, metadata_process.pid
 
-    def start_qemu_instance(self, instance):
+    def _create_instance_state_file(self, instance, state):
         instance_dir = libvirt_utils.get_instance_path(instance)
+        state_file_path = os.path.join(instance_dir, 'state')
+        with open(state_file_path, "w") as state_file:
+            json.dump(state, state_file)
+
+    def start_qemu_instance(self, instance):
         cmdline, vnc_port, qmp_port, metadata_pid = self._create_qemu_machine(instance)
         LOG.debug('Cmdline: %s' % (cmdline))
         qemu_process = subprocess.Popen(cmdline)
-        state_file_path = os.path.join(instance_dir, 'state')
-        with open(state_file_path, "w") as state_file:
-            json.dump({'pid': qemu_process.pid, 'vnc_port': vnc_port, 'qmp_port': qmp_port, 
-                       'metadata_pid': metadata_pid}, state_file)
+        state = {'pid': qemu_process.pid, 'vnc_port': vnc_port, 'qmp_port': qmp_port, 
+                       'metadata_pid': metadata_pid, 'iscsi_devices': {}}
+        self._create_instance_state_file(instance, state)
 
     def _next_vnc_display(self):
         port = self._get_available_port(VNC_BASE_PORT, 100)
@@ -617,7 +621,7 @@ class QemuWinDriver(driver.ComputeDriver):
         instances_path = CONF.instances_path
         state_file_path = os.path.join(instances_path, 'host_state')
         with open(state_file_path, "w") as state_file:
-            json.dump({'uuid': host_state['uuid'], 'arch': host_state['arch']}, state_file)
+            json.dump({'uuid': host_state['uuid'], 'arch': host_state['arch'], 'next_volume_index': host_state['next_volume_index']}, state_file)
 
     def create_host_state(self):
         host_state = {}
@@ -1528,15 +1532,14 @@ class QemuWinDriver(driver.ComputeDriver):
     def power_on(self, context, instance, network_info, block_device_info):
         state = self._get_instance_state(instance)
         if state is not None:
-            instance_dir = libvirt_utils.get_instance_path(instance)
             cmdline, vnc_port, qmp_port = self._create_qemu_machine(instance)
             qemu_process = subprocess.Popen(cmdline)
-            state_file_path = os.path.join(instance_dir, 'state')
             state['pid'] = qemu_process.pid
             state['qmp_port'] = qmp_port
             state['vnc_port'] = vnc_port
-            with open(state_file_path, "w") as state_file:
-                json.dump(state, state_file)
+            if 'iscsi_devices' not in state:
+                state['iscsi_devices'] = {}
+            self._create_instance_state_file(instance, state)
 
     def soft_delete(self, instance):
         pass
@@ -1659,40 +1662,91 @@ class QemuWinDriver(driver.ComputeDriver):
                 line_data = clean_line.split(' : ')
                 return line_data[1].strip()
 
+    def _get_iscsi_session_id(self, target):
+        out, err = self._execute_iscsi_command(LIST_SESSIONS_CMD)
+        lines = out.splitlines()
+        is_disk_device = False
+        is_target = False
+        session_id = None
+        for line in lines:
+            clean_line = line.strip()
+            if clean_line.startswith('Session Id'):
+                line_data = clean_line.split(' : ')
+                session_id = line_data[1]
+            if clean_line.startswith('Target Name'):
+                line_data = clean_line.split(' : ')
+                if (line_data[1].strip() == target) and (session_id is not None):
+                    return session_id
+        return None
+
     def attach_volume(self, context, connection_info, instance, mountpoint,
                       encryption=None):
         """Attach the disk to the instance at mountpoint using info."""
         instance_name = instance['name']
         LOG.debug('QEMUWINDRIVER: volume connection info %s' % connection_info)
+
         target_portal_address = connection_info['data']['target_portal'].split(':')
         self._add_target_portal(target_portal_address[0])
         self._login_target(connection_info['data']['target_iqn'])
+
         physical_drive = self._get_physical_drive(connection_info['data']['target_iqn'])
         physical_drive = physical_drive.replace("\\", "\\\\")
         LOG.debug('QEMUWINDRIVER: volume connection physical drive %s' % (physical_drive))
-        host_state = self._get_host_state()
-        if host_state is None:
-            host_state = self.create_host_state()
-        DRIVEID = 'drive-scsi0-0-0-%s' % (host_state['next_volume_index'])
-        DEVICEID = 'scsi0-0-0-%s' % (host_state['next_volume_index'])
-        DRIVE_ADD = 'drive_add 10 file=%s,if=none,id=%s' % (physical_drive, DRIVEID)
-        DEVICE_ADD = 'device_add usb-storage,bus=usb.0,drive=%s,id=%s' % (DRIVEID, DEVICEID)
-        result_drive_add = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, DRIVE_ADD))
-        LOG.debug('QEMUWINDRIVER: attach volume drive add %s' % (result_drive_add))
-        result_device_add = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, DEVICE_ADD))
-        LOG.debug('QEMUWINDRIVER: attach volume device add %s' % (result_device_add))
+
+        instance_state = self._get_instance_state(instance)
+        next_volume_index = 0
+        while True:
+            if next_volume_index not in instance_state['iscsi_devices']:
+                break
+            next_volume_index += 1
+
+        drive_id = 'drive-scsi0-0-0-%s' % (next_volume_index)
+        device_id = 'scsi0-0-0-%s' % (next_volume_index)
+        drive_add = 'drive_add 10 file=%s,if=none,id=%s' % (physical_drive, drive_id)
+        device_add = 'device_add virtio-blk-pci,drive=%s,id=%s' % (drive_id, device_id)
+
+        result_drive_add = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, drive_add))
+        json_result = json.loads(result_drive_add)
+        if 'return' in json_result and json_result['return'] == 'OK':
+            result_device_add = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, device_add))
+            json_result = json.loads(result_device_add)
+            if 'return' in json_result and (json_result['return'] != 'OK' and json_result['return'] != ''):
+                return False
+        else:
+            return False
+
         if instance_name not in self._mounts:
             self._mounts[instance_name] = {}
         self._mounts[instance_name][mountpoint] = connection_info
-        host_state['next_volume_index'] = (int(host_state['next_volume_index']) + 1)
-        self._create_host_state_file(host_state)
+        instance_state['iscsi_devices'][next_volume_index] = connection_info['data']['target_iqn']
+        self._create_instance_state_file(instance, instance_state)
         return True
 
     def detach_volume(self, connection_info, instance, mountpoint,
                       encryption=None):
         """Detach the disk attached to the instance."""
         try:
-            del self._mounts[instance['name']][mountpoint]
+            instance_state = self._get_instance_state(instance)
+            remove_index = None
+            if 'iscsi_devices' in instance_state:
+                for index in instance_state['iscsi_devices']:
+                    if instance_state['iscsi_devices'][index] == connection_info['data']['target_iqn']:
+                        remove_index = index
+                        drive_id = 'drive-scsi0-0-0-%s' % (index)
+                        device_id = 'scsi0-0-0-%s' % (index)
+                        drive_del = 'drive_del %s' % (drive_id)
+                        device_del = 'device_del %s' % (device_id)
+                        result_device_del = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, device_del))
+                        result_json = json.loads(result_device_del)
+                        if 'return' in result_json and (result_json['return'] != 'OK' and result_json['return'] != ''):
+                            result_drive_del = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, drive_del))
+                del instance_state['iscsi_devices'][remove_index]
+                self._create_instance_state_file(instance, instance_state)
+
+            session_id = self._get_iscsi_session_id(connection_info['data']['target_iqn'])
+            if session_id is not None:
+                self._logout_target()
+                del self._mounts[instance['name']][mountpoint]
         except KeyError:
             pass
         return True
