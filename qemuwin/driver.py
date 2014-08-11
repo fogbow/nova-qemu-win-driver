@@ -1690,6 +1690,8 @@ class QemuWinDriver(driver.ComputeDriver):
         self._login_target(connection_info['data']['target_iqn'])
 
         physical_drive = self._get_physical_drive(connection_info['data']['target_iqn'])
+        if physical_drive is None:
+            return False
         physical_drive = physical_drive.replace("\\", "\\\\")
         LOG.debug('QEMUWINDRIVER: volume connection physical drive %s' % (physical_drive))
 
@@ -1707,10 +1709,10 @@ class QemuWinDriver(driver.ComputeDriver):
 
         result_drive_add = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, drive_add))
         json_result = json.loads(result_drive_add)
-        if 'return' in json_result and json_result['return'] == 'OK':
+        if 'return' in json_result and json_result['return'].strip() == 'OK':
             result_device_add = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, device_add))
             json_result = json.loads(result_device_add)
-            if 'return' in json_result and (json_result['return'] != 'OK' and json_result['return'] != ''):
+            if 'return' in json_result and (json_result['return'].strip() != 'OK' and json_result['return'].strip() != ''):
                 return False
         else:
             return False
@@ -1737,9 +1739,6 @@ class QemuWinDriver(driver.ComputeDriver):
                         drive_del = 'drive_del %s' % (drive_id)
                         device_del = 'device_del %s' % (device_id)
                         result_device_del = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, device_del))
-                        result_json = json.loads(result_device_del)
-                        if 'return' in result_json and (result_json['return'] != 'OK' and result_json['return'] != ''):
-                            result_drive_del = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, drive_del))
                 del instance_state['iscsi_devices'][remove_index]
                 self._create_instance_state_file(instance, instance_state)
 
