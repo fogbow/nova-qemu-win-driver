@@ -103,10 +103,6 @@ libvirt_opts = [
                help='Rescue aki image'),
     cfg.StrOpt('rescue_ramdisk_id',
                help='Rescue ari image'),
-    cfg.StrOpt('libvirt_type',
-               default='kvm',
-               help='Libvirt domain type (valid options are: '
-                    'kvm, lxc, qemu, uml, xen)'),
     cfg.StrOpt('libvirt_uri',
                default='',
                help='Override the default libvirt URI '
@@ -615,7 +611,7 @@ class QemuWinDriver(driver.ComputeDriver):
             with open(state_file_path, 'r') as state_file:
                 return json.load(state_file)
         except Exception:
-            return None
+            return self.create_host_state()
 
     def _create_host_state_file(self, host_state):
         instances_path = CONF.instances_path
@@ -640,7 +636,7 @@ class QemuWinDriver(driver.ComputeDriver):
         return arch
 
     def _create_host_uuid(self):
-        return str(uuid.uuid4())
+        return str(uuid.uuid1())
 
     def get_host_capabilities(self):
         """Returns an instance of config.LibvirtConfigCaps representing
@@ -651,12 +647,16 @@ class QemuWinDriver(driver.ComputeDriver):
         # http://blogs.technet.com/b/aaronczechowski/archive/2012/01/04/using-smbios-guid-for-importing-computer-information-for-vmware-guest.aspx
         
         if not self._caps:
+            host_state = self._get_host_state()
             self._caps = vconfig.LibvirtConfigCaps()
             self._caps.host = vconfig.LibvirtConfigCapsHost()
-            self._caps.host.uuid = '67452301-ab89-efcd-fedc-ba9876543210'
+            self._caps.host.uuid = host_state['uuid']
             hostcpu = vconfig.LibvirtConfigGuestCPU()
             self._caps.host.cpu = hostcpu
-            hostcpu.arch = 'x86_64'
+            hostcpu_arch = 'i386'
+            if platform.architecture()[0] == '64bit':
+                hostcpu_arch = 'x86_64'
+            hostcpu.arch = hostcpu_arch
             hostcpu.model = 'host-model'
             hostcpu.vendor = 'Intel'
             hostcpu.features = []
@@ -750,7 +750,7 @@ class QemuWinDriver(driver.ComputeDriver):
 
         """
         # TODO qemu --version?
-        return "201"
+        return "2.1.0"
 
     def set_cache_mode(self, conf):
         """Set cache mode on LibvirtConfigGuestDisk object."""
@@ -956,6 +956,7 @@ class QemuWinDriver(driver.ComputeDriver):
         if CONF.libvirt_type == "xen" and guest.os_type == vm_mode.HVM:
             guest.os_loader = CONF.xen_hvmloader_path
 
+        LOG.debug('QEMUWINDRIVER: libvirt_type: %s' % (CONF.libvirt_type))
         if CONF.libvirt_type in ("kvm", "qemu"):
             caps = self.get_host_capabilities()
             if caps.host.cpu.arch in ("i686", "x86_64"):
@@ -2013,7 +2014,7 @@ class QemuWinDriver(driver.ComputeDriver):
         """Return fake Host Status of ram, disk, network."""
         stats = []
         for nodename in _FAKE_NODES:
-            host_status = self.host_status_base.copy()
+            host_status = self.get_available_resource(nodename)
             host_status['hypervisor_hostname'] = nodename
             host_status['host_hostname'] = nodename
             host_status['host_name_label'] = nodename
