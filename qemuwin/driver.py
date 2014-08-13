@@ -1781,23 +1781,30 @@ class QemuWinDriver(driver.ComputeDriver):
                 'num_cpu': 2,
                 'cpu_time': 0}
 
+    def get_value(entry):
+        values = entry.split("=")
+        return values[1]
+
     def get_diagnostics(self, instance_name):
-        return {'cpu0_time': 17300000000,
-                'memory': 524288,
-                'vda_errors': -1,
-                'vda_read': 262144,
-                'vda_read_req': 112,
-                'vda_write': 5778432,
-                'vda_write_req': 488,
-                'vnet1_rx': 2070139,
-                'vnet1_rx_drop': 0,
-                'vnet1_rx_errors': 0,
-                'vnet1_rx_packets': 26701,
-                'vnet1_tx': 140208,
-                'vnet1_tx_drop': 0,
-                'vnet1_tx_errors': 0,
-                'vnet1_tx_packets': 662,
-        }
+        this_instance = self.instances[instance[instance_name]]
+        HOST = 127.0.0.1
+        PORT = state[qmp_port]
+
+        result_blockstats = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, "info blockstats"))
+        datastring = json.loads(result_blockstats)
+        solv = datastring['return']
+        resolv = solv.split("\n")
+        output = {}
+        for line in resolv:
+            if (line.strip() != ''):
+                opts = line.split()
+                guest_disk = opts[0].strip(':') 
+                output[guest_disk + "_read_req"] = get_value(opts[1])
+                output[guest_disk + "_read"] = get_value(opts[2])
+                output[guest_disk + "_write_req"] = get_value(opts[3])
+                output[guest_disk + "_write"] = get_value(opts[4])
+                output[guest_disk + "_errors"] = get_value(opts[5])
+        return output
 
     def get_all_bw_counters(self, instances):
         """Return bandwidth usage counters for each interface on each
