@@ -433,7 +433,8 @@ class QemuWinDriver(driver.ComputeDriver):
 
     @staticmethod
     def qemuCommandNew(arch):
-        return ['qemu-system-%s.exe' % arch]
+        #return ['qemu-system-%s.exe' % arch]
+        return ['qemu-system-x86_64.exe']
 
     @staticmethod
     def qemuCommandAddArg(cmd, argName, argValue):
@@ -653,10 +654,7 @@ class QemuWinDriver(driver.ComputeDriver):
             self._caps.host.uuid = host_state['uuid']
             hostcpu = vconfig.LibvirtConfigGuestCPU()
             self._caps.host.cpu = hostcpu
-            hostcpu_arch = 'i386'
-            if platform.architecture()[0] == '64bit':
-                hostcpu_arch = 'x86_64'
-            hostcpu.arch = hostcpu_arch
+            hostcpu.arch = self._get_host_arch()
             hostcpu.model = 'host-model'
             hostcpu.vendor = 'Intel'
             hostcpu.features = []
@@ -787,81 +785,73 @@ class QemuWinDriver(driver.ComputeDriver):
         block_device_mapping = driver.block_device_info_get_mapping(
             block_device_info)
 
-        if CONF.libvirt_type == "lxc":
-            fs = vconfig.LibvirtConfigGuestFilesys()
-            fs.source_type = "mount"
-            fs.source_dir = os.path.join(
-                libvirt_utils.get_instance_path(instance), 'rootfs')
-            devices.append(fs)
+        if rescue:
+            diskrescue = self.get_guest_disk_config(instance,
+                                                    'disk.rescue',
+                                                    disk_mapping,
+                                                    inst_type)
+            devices.append(diskrescue)
+
+            diskos = self.get_guest_disk_config(instance,
+                                                'disk',
+                                                disk_mapping,
+                                                inst_type)
+            devices.append(diskos)
         else:
-
-            if rescue:
-                diskrescue = self.get_guest_disk_config(instance,
-                                                        'disk.rescue',
-                                                        disk_mapping,
-                                                        inst_type)
-                devices.append(diskrescue)
-
+            if 'disk' in disk_mapping:
                 diskos = self.get_guest_disk_config(instance,
                                                     'disk',
                                                     disk_mapping,
                                                     inst_type)
                 devices.append(diskos)
-            else:
-                if 'disk' in disk_mapping:
-                    diskos = self.get_guest_disk_config(instance,
-                                                        'disk',
-                                                        disk_mapping,
-                                                        inst_type)
-                    devices.append(diskos)
 
-                if 'disk.local' in disk_mapping:
-                    disklocal = self.get_guest_disk_config(instance,
-                                                           'disk.local',
-                                                           disk_mapping,
-                                                           inst_type)
-                    devices.append(disklocal)
-                    self.virtapi.instance_update(
-                        nova_context.get_admin_context(), instance['uuid'],
-                        {'default_ephemeral_device':
-                             block_device.prepend_dev(disklocal.target_dev)})
+            if 'disk.local' in disk_mapping:
+                disklocal = self.get_guest_disk_config(instance,
+                                                       'disk.local',
+                                                       disk_mapping,
+                                                       inst_type)
+                devices.append(disklocal)
+                self.virtapi.instance_update(
+                    nova_context.get_admin_context(), instance['uuid'],
+                    {'default_ephemeral_device':
+                         block_device.prepend_dev(disklocal.target_dev)})
 
-                for idx, eph in enumerate(
-                    driver.block_device_info_get_ephemerals(
-                        block_device_info)):
-                    diskeph = self.get_guest_disk_config(
-                        instance,
-                        blockinfo.get_eph_disk(idx),
-                        disk_mapping, inst_type)
-                    devices.append(diskeph)
+            for idx, eph in enumerate(
+                driver.block_device_info_get_ephemerals(
+                    block_device_info)):
+                diskeph = self.get_guest_disk_config(
+                    instance,
+                    blockinfo.get_eph_disk(idx),
+                    disk_mapping, inst_type)
+                devices.append(diskeph)
 
-                if 'disk.swap' in disk_mapping:
-                    diskswap = self.get_guest_disk_config(instance,
-                                                          'disk.swap',
-                                                          disk_mapping,
-                                                          inst_type)
-                    devices.append(diskswap)
-                    self.virtapi.instance_update(
-                        nova_context.get_admin_context(), instance['uuid'],
-                        {'default_swap_device': block_device.prepend_dev(
-                            diskswap.target_dev)})
+            if 'disk.swap' in disk_mapping:
+                diskswap = self.get_guest_disk_config(instance,
+                                                      'disk.swap',
+                                                      disk_mapping,
+                                                      inst_type)
+                devices.append(diskswap)
+                self.virtapi.instance_update(
+                    nova_context.get_admin_context(), instance['uuid'],
+                    {'default_swap_device': block_device.prepend_dev(
+                        diskswap.target_dev)})
 
-                for vol in block_device_mapping:
-                    connection_info = vol['connection_info']
-                    vol_dev = block_device.prepend_dev(vol['mount_device'])
-                    info = disk_mapping[vol_dev]
-                    cfg = self.volume_driver_method('connect_volume',
-                                                    connection_info,
-                                                    info)
-                    devices.append(cfg)
+            for vol in block_device_mapping:
+                connection_info = vol['connection_info']
+                vol_dev = block_device.prepend_dev(vol['mount_device'])
+                info = disk_mapping[vol_dev]
+                cfg = self.volume_driver_method('connect_volume',
+                                                connection_info,
+                                                info)
+                devices.append(cfg)
 
-            if 'disk.config' in disk_mapping:
-                diskconfig = self.get_guest_disk_config(instance,
-                                                        'disk.config',
-                                                        disk_mapping,
-                                                        inst_type,
-                                                        'raw')
-                devices.append(diskconfig)
+        if 'disk.config' in disk_mapping:
+            diskconfig = self.get_guest_disk_config(instance,
+                                                    'disk.config',
+                                                    disk_mapping,
+                                                    inst_type,
+                                                    'raw')
+            devices.append(diskconfig)
 
         for d in devices:
             self.set_cache_mode(d)
@@ -877,6 +867,7 @@ class QemuWinDriver(driver.ComputeDriver):
 
         sysinfo.system_serial = self.get_host_uuid()
         sysinfo.system_uuid = instance['uuid']
+        LOG.debug('QEMUWINDRIVER: get guest config sysinfo: %s' % (sysinfo))
 
         return sysinfo
 
@@ -886,11 +877,7 @@ class QemuWinDriver(driver.ComputeDriver):
         dev = vconfig.LibvirtConfigGuestHostdevPCI()
         dev.domain, dev.bus, dev.slot, dev.function = dbsf
 
-        # only kvm support managed mode
-        if CONF.libvirt_type in ('xen'):
-            dev.managed = 'no'
-        if CONF.libvirt_type in ('kvm', 'qemu'):
-            dev.managed = 'yes'
+        dev.managed = 'yes'
 
         return dev
 
@@ -944,65 +931,33 @@ class QemuWinDriver(driver.ComputeDriver):
         guest.os_type = vm_mode.get_from_instance(instance)
 
         if guest.os_type is None:
-            if CONF.libvirt_type == "lxc":
-                guest.os_type = vm_mode.EXE
-            elif CONF.libvirt_type == "uml":
-                guest.os_type = vm_mode.UML
-            elif CONF.libvirt_type == "xen":
-                guest.os_type = vm_mode.XEN
-            else:
-                guest.os_type = vm_mode.HVM
-
-        if CONF.libvirt_type == "xen" and guest.os_type == vm_mode.HVM:
-            guest.os_loader = CONF.xen_hvmloader_path
+            guest.os_type = vm_mode.HVM
 
         LOG.debug('QEMUWINDRIVER: libvirt_type: %s' % (CONF.libvirt_type))
-        if CONF.libvirt_type in ("kvm", "qemu"):
-            caps = self.get_host_capabilities()
-            if caps.host.cpu.arch in ("i686", "x86_64"):
-                guest.sysinfo = self.get_guest_config_sysinfo(instance)
-                guest.os_smbios = vconfig.LibvirtConfigGuestSMBIOS()
+        caps = self.get_host_capabilities()
+        if caps.host.cpu.arch in ("i386", "x86_64"):
+            LOG.debug('QEMUWINDRIVER: about to run get_guest_config_sysinfo for instance: %s' % (instance))
+            guest.sysinfo = self.get_guest_config_sysinfo(instance)
+            guest.os_smbios = vconfig.LibvirtConfigGuestSMBIOS()
 
-        if CONF.libvirt_type == "lxc":
-            guest.os_type = vm_mode.EXE
-            guest.os_init_path = "/sbin/init"
-            guest.os_cmdline = CONSOLE
-        elif CONF.libvirt_type == "uml":
-            guest.os_type = vm_mode.UML
-            guest.os_kernel = "/usr/bin/linux"
-            guest.os_root = root_device_name
-        else:
-            if CONF.libvirt_type == "xen" and guest.os_type == vm_mode.XEN:
-                guest.os_root = root_device_name
-            else:
-                guest.os_type = vm_mode.HVM
+        guest.os_type = vm_mode.HVM
 
-            if rescue:
-                if rescue.get('kernel_id'):
-                    guest.os_kernel = os.path.join(inst_path, "kernel.rescue")
-                    if CONF.libvirt_type == "xen":
-                        guest.os_cmdline = "ro"
-                    else:
-                        guest.os_cmdline = ("root=%s %s" % (root_device_name,
-                                                            CONSOLE))
-
-                if rescue.get('ramdisk_id'):
-                    guest.os_initrd = os.path.join(inst_path, "ramdisk.rescue")
-            elif instance['kernel_id']:
-                guest.os_kernel = os.path.join(inst_path, "kernel")
-                if CONF.libvirt_type == "xen":
-                    guest.os_cmdline = "ro"
-                else:
-                    guest.os_cmdline = ("root=%s %s" % (root_device_name,
+        if rescue:
+            if rescue.get('kernel_id'):
+                guest.os_kernel = os.path.join(inst_path, "kernel.rescue")
+                guest.os_cmdline = ("root=%s %s" % (root_device_name,
                                                         CONSOLE))
-                if instance['ramdisk_id']:
-                    guest.os_initrd = os.path.join(inst_path, "ramdisk")
-            else:
-                guest.os_boot_dev = "hd"
 
-        if CONF.libvirt_type != "lxc" and CONF.libvirt_type != "uml":
-            guest.acpi = True
-            guest.apic = True
+            if rescue.get('ramdisk_id'):
+                guest.os_initrd = os.path.join(inst_path, "ramdisk.rescue")
+        elif instance['kernel_id']:
+            guest.os_kernel = os.path.join(inst_path, "kernel")
+            guest.os_cmdline = ("root=%s %s" % (root_device_name,
+                                                CONSOLE))
+            if instance['ramdisk_id']:
+                guest.os_initrd = os.path.join(inst_path, "ramdisk")
+        else:
+            guest.os_boot_dev = "hd"
 
         # NOTE(mikal): Microsoft Windows expects the clock to be in
         # "localtime". If the clock is set to UTC, then you can use a
@@ -1017,19 +972,18 @@ class QemuWinDriver(driver.ComputeDriver):
             clk.offset = 'utc'
         guest.set_clock(clk)
 
-        if CONF.libvirt_type == "kvm":
-            # TODO(berrange) One day this should be per-guest
-            # OS type configurable
-            tmpit = vconfig.LibvirtConfigGuestTimer()
-            tmpit.name = "pit"
-            tmpit.tickpolicy = "delay"
+        # TODO(berrange) One day this should be per-guest
+        # OS type configurable
+        tmpit = vconfig.LibvirtConfigGuestTimer()
+        tmpit.name = "pit"
+        tmpit.tickpolicy = "delay"
 
-            tmrtc = vconfig.LibvirtConfigGuestTimer()
-            tmrtc.name = "rtc"
-            tmrtc.tickpolicy = "catchup"
+        tmrtc = vconfig.LibvirtConfigGuestTimer()
+        tmrtc.name = "rtc"
+        tmrtc.tickpolicy = "catchup"
 
-            clk.add_timer(tmpit)
-            clk.add_timer(tmrtc)
+        clk.add_timer(tmpit)
+        clk.add_timer(tmrtc)
 
         for cfg in self.get_guest_storage_config(instance,
                                                  image_meta,
@@ -1046,23 +1000,18 @@ class QemuWinDriver(driver.ComputeDriver):
                                              inst_type)
             guest.add_device(cfg)
 
-        if CONF.libvirt_type == "qemu" or CONF.libvirt_type == "kvm":
-            # The QEMU 'pty' driver throws away any data if no
-            # client app is connected. Thus we can't get away
-            # with a single type=pty console. Instead we have
-            # to configure two separate consoles.
-            consolelog = vconfig.LibvirtConfigGuestSerial()
-            consolelog.type = "file"
-            consolelog.source_path = self._get_console_log_path(instance)
-            guest.add_device(consolelog)
+        # The QEMU 'pty' driver throws away any data if no
+        # client app is connected. Thus we can't get away
+        # with a single type=pty console. Instead we have
+        # to configure two separate consoles.
+        consolelog = vconfig.LibvirtConfigGuestSerial()
+        consolelog.type = "file"
+        consolelog.source_path = self._get_console_log_path(instance)
+        guest.add_device(consolelog)
 
-            consolepty = vconfig.LibvirtConfigGuestSerial()
-            consolepty.type = "pty"
-            guest.add_device(consolepty)
-        else:
-            consolepty = vconfig.LibvirtConfigGuestConsole()
-            consolepty.type = "pty"
-            guest.add_device(consolepty)
+        consolepty = vconfig.LibvirtConfigGuestSerial()
+        consolepty.type = "pty"
+        guest.add_device(consolepty)
 
         # We want a tablet if VNC is enabled,
         # or SPICE is enabled and the SPICE agent is disabled
@@ -1081,8 +1030,7 @@ class QemuWinDriver(driver.ComputeDriver):
             tablet.bus = "usb"
             guest.add_device(tablet)
 
-        if CONF.spice.enabled and CONF.spice.agent_enabled and \
-                CONF.libvirt_type not in ('lxc', 'uml', 'xen'):
+        if CONF.spice.enabled and CONF.spice.agent_enabled:
             channel = vconfig.LibvirtConfigGuestChannel()
             channel.target_name = "com.redhat.spice.0"
             guest.add_device(channel)
@@ -1092,15 +1040,14 @@ class QemuWinDriver(driver.ComputeDriver):
         # those versions are. We'll just let libvirt report the
         # errors appropriately if the user enables both.
 
-        if CONF.vnc_enabled and CONF.libvirt_type not in ('lxc', 'uml'):
+        if CONF.vnc_enabled:
             graphics = vconfig.LibvirtConfigGuestGraphics()
             graphics.type = "vnc"
             graphics.keymap = CONF.vnc_keymap
             graphics.listen = CONF.vncserver_listen
             guest.add_device(graphics)
 
-        if CONF.spice.enabled and \
-                CONF.libvirt_type not in ('lxc', 'uml', 'xen'):
+        if CONF.spice.enabled:
             graphics = vconfig.LibvirtConfigGuestGraphics()
             graphics.type = "spice"
             graphics.keymap = CONF.spice.keymap
@@ -1108,33 +1055,27 @@ class QemuWinDriver(driver.ComputeDriver):
             guest.add_device(graphics)
 
         # Qemu guest agent only support 'qemu' and 'kvm' hypervisor
-        if CONF.libvirt_type in ('qemu', 'kvm'):
-            qga_enabled = False
-            # Enable qga only if the 'hw_qemu_guest_agent' property is set
-            if (image_meta is not None and image_meta.get('properties') and
-                    image_meta['properties'].get('hw_qemu_guest_agent')
-                    is not None):
-                hw_qga = image_meta['properties']['hw_qemu_guest_agent']
-                if hw_qga.lower() == 'yes':
-                    LOG.debug(_("Qemu guest agent is enabled through image "
-                                "metadata"), instance=instance)
-                    qga_enabled = True
+        qga_enabled = False
+        # Enable qga only if the 'hw_qemu_guest_agent' property is set
+        if (image_meta is not None and image_meta.get('properties') and
+                image_meta['properties'].get('hw_qemu_guest_agent')
+                is not None):
+            hw_qga = image_meta['properties']['hw_qemu_guest_agent']
+            if hw_qga.lower() == 'yes':
+                LOG.debug(_("Qemu guest agent is enabled through image "
+                            "metadata"), instance=instance)
+                qga_enabled = True
 
-            if qga_enabled:
-                qga = vconfig.LibvirtConfigGuestChannel()
-                qga.type = "unix"
-                qga.target_name = "org.qemu.guest_agent.0"
-                qga.source_path = ("/var/lib/libvirt/qemu/%s.%s.sock" %
-                                ("org.qemu.guest_agent.0", instance['name']))
-                guest.add_device(qga)
+        if qga_enabled:
+            qga = vconfig.LibvirtConfigGuestChannel()
+            qga.type = "unix"
+            qga.target_name = "org.qemu.guest_agent.0"
+            qga.source_path = ("/var/lib/libvirt/qemu/%s.%s.sock" %
+                            ("org.qemu.guest_agent.0", instance['name']))
+            guest.add_device(qga)
 
-        if CONF.libvirt_type in ('xen', 'qemu', 'kvm'):
-            for pci_dev in pci_manager.get_instance_pci_devs(instance):
-                guest.add_device(self.get_guest_pci_device(pci_dev))
-        else:
-            if len(pci_manager.get_instance_pci_devs(instance)) > 0:
-                raise exception.PciDeviceUnsupportedHypervisor(
-                    type=CONF.libvirt_type)
+        for pci_dev in pci_manager.get_instance_pci_devs(instance):
+            guest.add_device(self.get_guest_pci_device(pci_dev))
 
         return guest
 
@@ -1145,10 +1086,7 @@ class QemuWinDriver(driver.ComputeDriver):
         dev.domain, dev.bus, dev.slot, dev.function = dbsf
 
         # only kvm support managed mode
-        if CONF.libvirt_type in ('xen'):
-            dev.managed = 'no'
-        if CONF.libvirt_type in ('kvm', 'qemu'):
-            dev.managed = 'yes'
+        dev.managed = 'yes'
 
         return dev
 
@@ -1351,9 +1289,7 @@ class QemuWinDriver(driver.ComputeDriver):
                 target_partition = CONF.libvirt_inject_partition
                 if target_partition == 0:
                     target_partition = None
-            if CONF.libvirt_type == 'lxc':
-                target_partition = None
-
+            
             if CONF.libvirt_inject_key and instance['key_data']:
                 key = str(instance['key_data'])
             else:
@@ -1786,9 +1722,7 @@ class QemuWinDriver(driver.ComputeDriver):
         return values[1]
 
     def get_diagnostics(self, instance_name):
-        this_instance = self.instances[instance[instance_name]]
-        HOST = 127.0.0.1
-        PORT = state[qmp_port]
+        instance = self.instances[instance_name]
 
         result_blockstats = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, "info blockstats"))
         datastring = json.loads(result_blockstats)
