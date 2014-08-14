@@ -530,7 +530,7 @@ class QemuWinDriver(driver.ComputeDriver):
         LOG.debug('Cmdline: %s' % (cmdline))
         qemu_process = subprocess.Popen(cmdline)
         state = {'pid': qemu_process.pid, 'vnc_port': vnc_port, 'qmp_port': qmp_port, 
-                       'metadata_pid': metadata_pid, 'iscsi_devices': {}}
+                       'metadata_pid': metadata_pid, 'iscsi_devices': {}, 'machine_start_time': int(round(time.time()))}
         self._create_instance_state_file(instance, state)
 
     def _next_vnc_display(self):
@@ -1775,11 +1775,15 @@ class QemuWinDriver(driver.ComputeDriver):
         if instance['name'] not in self.instances:
             raise exception.InstanceNotFound(instance_id=instance['name'])
         i = self.instances[instance['name']]
+        intance_state = self._get_instance_state(instance)
+        cputime = (int(round(time.time())) - int(instance_state['machine_start_time']))*(10**6)
+        result_cpus = self._run_qmp_command(instance, 'query-cpus')
+        datastring = json.loads(result_cpus)
         return {'state': i.state,
                 'max_mem': 0,
                 'mem': 0,
-                'num_cpu': 2,
-                'cpu_time': 0}
+                'num_cpu': datastring.__len__(),
+                'cpu_time': cputime}
 
     def get_value(entry):
         values = entry.split("=")
