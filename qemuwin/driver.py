@@ -1711,7 +1711,7 @@ class QemuWinDriver(driver.ComputeDriver):
         if instance['name'] not in self.instances:
             raise exception.InstanceNotFound(instance_id=instance['name'])
         i = self.instances[instance['name']]
-        intance_state = self._get_instance_state(instance)
+        instance_state = self._get_instance_state(instance)
         cputime = (int(round(time.time())) - int(instance_state['machine_start_time']))*(10**6)
         result_cpus = self._run_qmp_command(instance, 'query-cpus')
         datastring = json.loads(result_cpus)
