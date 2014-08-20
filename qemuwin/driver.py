@@ -1702,18 +1702,17 @@ class QemuWinDriver(driver.ComputeDriver):
             raise exception.InterfaceDetachFailed('not attached')
 
     def _get_instance_status(self, instance):
-      json_qmp_status = self._run_qmp_command(instance, 'query-status')
-      qmp_status = json_qmp_status['status']
+      is_running, qmp_status = self._get_machine_status(instance)
       if (qmp_status in ['running', 'debug']):
-        instance_status = power_state.RUNNING
+          instance_status = power_state.RUNNING
       elif (qmp_status in ['inmigrate', 'io-error', 'paused', 'postmigrate', 'prelaunch', 'finish-migrate', 'restore-vm', 'watchdog', 'save-vm']):
-        instance_status = power_state.PAUSED
+          instance_status = power_state.PAUSED
       elif (qmp_status == 'shutdown'):
-        instance_status = power_state.SHUTDOWN
+          instance_status = power_state.SHUTDOWN
       elif (qmp_status == 'internal-error'):
-        instance_status = power_state.CRASHED
+          instance_status = power_state.CRASHED
       else :
-        instance_status = power_state.NOSTATE
+          instance_status = power_state.NOSTATE
       return instance_status
 
     def _instance_exists(self, instance):
