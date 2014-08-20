@@ -207,7 +207,9 @@ libvirt_opts = [
                 help='TCP Port used by Nova metadata server.'),
     cfg.StrOpt('nova_metadata_shared_secret',
                 default='',
-                help='Shared secret to sign instance-id request')
+                help='Shared secret to sign instance-id request'),
+    cfg.StrOpt('qemu_home',
+                help='Path to home directory of QEMU binaries.')
     ]
 
 CONF = cfg.CONF
@@ -296,6 +298,7 @@ class QemuWinDriver(driver.ComputeDriver):
     def __init__(self, virtapi, read_only=False):
         super(QemuWinDriver, self).__init__(virtapi)
         LOG.info("fogbow.QemuWinDriver initialized")
+        LOG.info("QEMUWINDRIVER: qemu home: %s" % (CONF.qemu_home))
         self.instances = {}
         self._caps = None
         self._disk_cachemode = None
@@ -434,7 +437,9 @@ class QemuWinDriver(driver.ComputeDriver):
     @staticmethod
     def qemuCommandNew(arch):
         #return ['qemu-system-%s.exe' % arch]
-        return ['qemu-system-x86_64.exe']
+        qemu_command = os.path.join(CONF.qemu_home, 'qemu-system-x86_64.exe')
+        LOG.debug('QEMUWINDRIVER: qemu binary location: %s' % (qemu_command))
+        return [qemu_command]
 
     @staticmethod
     def qemuCommandAddArg(cmd, argName, argValue):
