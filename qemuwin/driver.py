@@ -60,6 +60,7 @@ from nova.compute import power_state
 from nova.compute import task_states
 from nova.compute import utils as compute_utils
 from nova.compute import vm_mode
+from nova.compute import power_state
 from nova import context as nova_context
 from nova import exception
 from nova.image import glance
@@ -95,6 +96,7 @@ from nova.virt.qemuwin import images
 from nova.virt import netutils
 from nova import volume
 from nova.volume import encryptors
+
 
 libvirt_opts = [
     cfg.StrOpt('rescue_image_id',
@@ -252,7 +254,7 @@ COMMAND_END_MESSAGE = 'The operation completed successfully.'
 
 LOG = logging.getLogger(__name__)
 
-_FAKE_NODES = None
+_NODES = None
 
 def set_nodes(nodes):
     """Sets FakeDriver's node.list.
@@ -264,8 +266,8 @@ def set_nodes(nodes):
 
     To restore the change, call restore_nodes()
     """
-    global _FAKE_NODES
-    _FAKE_NODES = nodes
+    global _NODES
+    _NODES = nodes
 
 
 def restore_nodes():
@@ -273,19 +275,8 @@ def restore_nodes():
 
     Usually called from tearDown().
     """
-    global _FAKE_NODES
-    _FAKE_NODES = [CONF.host]
-
-
-class FakeInstance(object):
-
-    def __init__(self, name, state):
-        self.name = name
-        self.state = state
-
-    def __getitem__(self, key):
-        return getattr(self, key)
-
+    global _NODES
+    _NODES = [CONF.host]
 
 class QemuWinDriver(driver.ComputeDriver):
     capabilities = {
@@ -342,7 +333,7 @@ class QemuWinDriver(driver.ComputeDriver):
                 continue
             self.disk_cachemodes[disk_type] = cache_mode
 
-        if not _FAKE_NODES:
+        if not _NODES:
             set_nodes([CONF.host])
 
     def init_host(self, host):
@@ -568,8 +559,6 @@ class QemuWinDriver(driver.ComputeDriver):
                           write_to_disk=True)
 
         self.start_qemu_instance(instance)
-        fake_instance = FakeInstance(name, state)
-        self.instances[name] = fake_instance
     
     @staticmethod
     def _get_console_log_path(instance):
@@ -1339,12 +1328,12 @@ class QemuWinDriver(driver.ComputeDriver):
             libvirt_utils.chown(image('disk').path, 'root')
 
     def live_snapshot(self, context, instance, name, update_task_state):
-        if instance['name'] not in self.instances:
+        if not (self._instance_exists(instance)):
             raise exception.InstanceNotRunning(instance_id=instance['uuid'])
         update_task_state(task_state=task_states.IMAGE_UPLOADING)
 
     def snapshot(self, context, instance, name, update_task_state):
-        if instance['name'] not in self.instances:
+        if not (self._instance_exists(instance)):
             raise exception.InstanceNotRunning(instance_id=instance['uuid'])
         update_task_state(task_state=task_states.IMAGE_UPLOADING)
 
@@ -1503,6 +1492,8 @@ class QemuWinDriver(driver.ComputeDriver):
         LOG.debug('QEMUWINDRIVER resuming instance %s' % (instance['name']))
         self._run_qmp_command(instance, QMP_RESUME_COMMAND)
 
+
+#TODO: This without the instance (maybe getting the name and searching the instance dir?)
     def _get_instance_state(self, instance):
         instance_dir = libvirt_utils.get_instance_path(instance)
         state_file_path = os.path.join(instance_dir, 'state')
@@ -1526,8 +1517,6 @@ class QemuWinDriver(driver.ComputeDriver):
             _kill(state['pid'])
             _kill(state['metadata_pid'])
         shutil.rmtree(libvirt_utils.get_instance_path(instance), True)
-        if (instance['name'] in self.instances):
-            del self.instances[instance['name']]
 
     def _execute_iscsi_command(self, cmd, arguments=False):
         if arguments:
@@ -1712,15 +1701,34 @@ class QemuWinDriver(driver.ComputeDriver):
         except KeyError:
             raise exception.InterfaceDetachFailed('not attached')
 
+    def _get_instance_status(self, instance):
+      json_qmp_status = self._run_qmp_command(instance, 'query-status')
+      qmp_status = json_qmp_status['status']
+      if (qmp_status in ['running', 'debug']):
+        instance_status = power_state.RUNNING
+      elif (qmp_status in ['inmigrate', 'io-error', 'paused', 'postmigrate', 'prelaunch', 'finish-migrate', 'restore-vm', 'watchdog', 'save-vm']):
+        instance_status = power_state.PAUSED
+      elif (qmp_status == 'shutdown'):
+        instance_status = power_state.SHUTDOWN
+      elif (qmp_status == 'internal-error'):
+        instance_status = power_state.CRASHED
+      else :
+        instance_status = power_state.NOSTATE
+      return instance_status
+
+    def _instance_exists(self, instance):
+      list_of_instances = self.list_instances()
+      return instance['uuid'] in list_of_instances
+
     def get_info(self, instance):
-        if instance['name'] not in self.instances:
+        if not(self._instance_exists(instance)):
             raise exception.InstanceNotFound(instance_id=instance['name'])
-        i = self.instances[instance['name']]
+        instance_status = self._get_instance_status(instance)
         instance_state = self._get_instance_state(instance)
         cputime = (int(round(time.time())) - int(instance_state['machine_start_time']))*(10**6)
         result_cpus = self._run_qmp_command(instance, 'query-cpus')
         datastring = json.loads(result_cpus)
-        return {'state': i.state,
+        return {'state': instance_status,
                 'max_mem': 0,
                 'mem': 0,
                 'num_cpu': datastring.__len__(),
@@ -1730,9 +1738,9 @@ class QemuWinDriver(driver.ComputeDriver):
         values = entry.split("=")
         return values[1]
 
-    def get_diagnostics(self, instance_name):
-        instance = self.instances[instance_name]
-
+    def get_diagnostics(self, instance):
+        if not(self._instance_exists(instance)):
+            raise exception.InstanceNotFound(instance_id=instance['name'])
         result_blockstats = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, "info blockstats"))
         datastring = json.loads(result_blockstats)
         solv = datastring['return']
@@ -1830,6 +1838,7 @@ class QemuWinDriver(driver.ComputeDriver):
             ctypes.byref(free))
         return (freeuser.value, total.value)
 
+
     def _get_host_disk_total(self):
         free, total = self._get_host_disk_space()
         return total
@@ -1888,7 +1897,7 @@ class QemuWinDriver(driver.ComputeDriver):
            Since we don't have a real hypervisor, pretend we have lots of
            disk and ram.
         """
-        if nodename not in _FAKE_NODES:
+        if nodename not in _NODES:
             return {}
 
         local_gb = self._get_host_disk_total() / (1024 ** 3)
@@ -1956,14 +1965,10 @@ class QemuWinDriver(driver.ComputeDriver):
     def unfilter_instance(self, instance_ref, network_info):
         return
 
-    def test_remove_vm(self, instance_name):
-        """Removes the named VM, as if it crashed. For testing."""
-        self.instances.pop(instance_name)
-
     def get_host_stats(self, refresh=False):
         """Return fake Host Status of ram, disk, network."""
         stats = []
-        for nodename in _FAKE_NODES:
+        for nodename in _NODES:
             host_status = self.get_available_resource(nodename)
             host_status['hypervisor_hostname'] = nodename
             host_status['host_hostname'] = nodename
@@ -2020,7 +2025,7 @@ class QemuWinDriver(driver.ComputeDriver):
         return {'ip': '127.0.0.1', 'initiator': 'fake', 'host': 'fakehost'}
 
     def get_available_nodes(self, refresh=False):
-        return _FAKE_NODES
+        return _NODES
 
     def instance_on_disk(self, instance):
         return False
