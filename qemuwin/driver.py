@@ -226,6 +226,10 @@ CONF.import_opt('vncserver_listen', 'nova.vnc')
 CONF.import_opt('server_proxyclient_address', 'nova.spice', group='spice')
 CONF.import_opt('instances_path', 'nova.compute.manager')
 
+HYPERVISOR_TYPE = 'qemu'
+HYPERVISOR_VERSION = '2.1.0'
+INSTANCE_METADATA_FILE = 'metadata'
+
 MAX_CONSOLE_BYTES = 102400
 PROCESS_TERMINATE = 1
 VNC_BASE_PORT = 5900
@@ -233,27 +237,26 @@ QMP_CAPABILITY_WAIT = 3
 SOCKET_NOT_BOUND = 10061
 POWEROFF_RETRIES = 120
 POWEROFF_RETRY_INTERVAL = 1
+
 QMP_REBOOT_COMMAND = 'system_reset'
 QMP_SUSPEND_COMMAND = 'stop'
 QMP_RESUME_COMMAND = 'cont'
 QMP_STOP_COMMAND = 'quit'
 QMP_SHUTDOWN_COMMAND = 'system_powerdown'
 QMP_MACHINE_STATUS = 'query-status'
-QMO_QUERY_CPUS = 'query-cpus'
-HUMAN_MONITOR_COMMAND = 'human-monitor-command'
-COMMAND_LINE = 'command-line'
+QMP_QUERY_CPUS = 'query-cpus'
+QMP_HUMAN_MONITOR_COMMAND = 'human-monitor-command'
+QMP_COMMAND_LINE = 'command-line'
 
 # iSCSI constants
 ISCSI_CLI = 'iscsicli.exe'
-LOGIN_CMD = 'qlogintarget'
-LOGOUT_CMD = 'logouttarget'
-PERSISTENT_LOGIN_CMD = 'persistentlogintarget'
-LIST_TARGETS_CMD = 'ListTargets'
-LIST_SESSIONS_CMD = 'SessionList'
-LIST_PERSISTENT_TARGETS_CMD = 'listpersistenttargets'
-TARGET_MAPPINGS_CMD = 'reporttargetmappings'
-ADD_TARGET_PORTAL_CMD = 'QAddTargetPortal'
-COMMAND_END_MESSAGE = 'The operation completed successfully.'
+ISCSI_LOGIN_CMD = 'qlogintarget'
+ISCSI_LOGOUT_CMD = 'logouttarget'
+ISCSI_LIST_TARGETS_CMD = 'ListTargets'
+ISCSI_LIST_SESSIONS_CMD = 'SessionList'
+ISCSI_TARGET_MAPPINGS_CMD = 'reporttargetmappings'
+ISCSI_ADD_TARGET_PORTAL_CMD = 'QAddTargetPortal'
+ISCSI_COMMAND_END_MESSAGE = 'The operation completed successfully.'
 
 LOG = logging.getLogger(__name__)
 
@@ -293,26 +296,9 @@ class QemuWinDriver(driver.ComputeDriver):
         super(QemuWinDriver, self).__init__(virtapi)
         LOG.info("fogbow.QemuWinDriver initialized")
         LOG.info("QEMUWINDRIVER: qemu home: %s" % (CONF.qemu_home))
-        self.instances = {}
         self._caps = None
         self._disk_cachemode = None
         
-        self.host_status_base = {
-          'vcpus': 100000,
-          'memory_mb': 8000000000,
-          'local_gb': 600000000000,
-          'vcpus_used': 0,
-          'memory_mb_used': 0,
-          'local_gb_used': 100000000000,
-          'hypervisor_type': 'fogbow',
-          'hypervisor_version': '2.1',
-          'hypervisor_hostname': CONF.host,
-          'cpu_info': {},
-          'disk_available_least': 500000000000,
-          }
-        
-        self._mounts = {}
-        self._interfaces = {}
         self.image_backend = imagebackend.Backend(CONF.use_cow_images)
         self.disk_cachemodes = {}
 
@@ -344,17 +330,12 @@ class QemuWinDriver(driver.ComputeDriver):
 
     def list_instances(self):
       instance_dir = CONF.instances_path
-      rawlist = [x[0] for x in os.walk(instance_dir)]
-      instancelist = []
-      for element in rawlist:
-         for eachfile in os.listdir(element):
-           if (eachfile == 'state'):
-             instancelist.append(os.path.basename(element))
-  
-      return  instancelist
-
-      
-        
+      instance_dir_children = [x[0] for x in os.walk(instance_dir)]
+      instance_list = []
+      for child in instance_dir_children:
+          if os.path.isfile(os.path.join(child, INSTANCE_METADATA_FILE)):
+              instance_list.append(os.path.basename(child))
+      return instance_list
 
     def plug_vifs(self, instance, network_info):
         """Plug VIFs into networks."""
@@ -430,7 +411,6 @@ class QemuWinDriver(driver.ComputeDriver):
 
     @staticmethod
     def qemuCommandNew(arch):
-        #return ['qemu-system-%s.exe' % arch]
         qemu_command = os.path.join(CONF.qemu_home, 'qemu-system-x86_64.exe')
         LOG.debug('QEMUWINDRIVER: qemu binary location: %s' % (qemu_command))
         return [qemu_command]
@@ -479,8 +459,10 @@ class QemuWinDriver(driver.ComputeDriver):
 
         interface = self.getEl(devices, 'interface')
         mac = self.getEl(interface, 'mac')
-        self.qemuCommandAddArg(cmd, '-netdev', '"user,id=hostnet0,net=169.254.169.0/24,guestfwd=tcp:169.254.169.254:80-tcp:127.0.0.1:%s"' % metadata_port)
-        self.qemuCommandAddArg(cmd, '-device', 'virtio-net-pci,netdev=hostnet0,id=net0,mac=%s,bus=pci.0,addr=0x3' % mac.attributes['address'].value)
+        self.qemuCommandAddArg(cmd, '-netdev', ('"user,id=hostnet0,net=169.254.169.0/24,' \
+                                                'guestfwd=tcp:169.254.169.254:80-tcp:127.0.0.1:%s"' % metadata_port))
+        self.qemuCommandAddArg(cmd, '-device', ('virtio-net-pci,netdev=hostnet0,id=net0,' \
+                                                'mac=%s,bus=pci.0,addr=0x3' % mac.attributes['address'].value))
 
         sysinfo = self.getEl(dom, 'sysinfo')
         sysinfoValue = 'type=1'
@@ -514,24 +496,24 @@ class QemuWinDriver(driver.ComputeDriver):
         current_path = os.path.dirname(__file__)
         proxy_cmd = ('python %s\metadataproxy.py --instance_id %s --tenant_id %s --metadata_server %s --metadata_port %s '
                      '--metadata_secret "%s" --port %s' % (current_path, instance_id, tenant_id, CONF.nova_metadata_host, 
-                                                         CONF.nova_metadata_port, CONF.nova_metadata_shared_secret, metadata_port))
+                                                           CONF.nova_metadata_port, CONF.nova_metadata_shared_secret, metadata_port))
         LOG.debug('metadataproxy: %s' % proxy_cmd)
         metadata_process = subprocess.Popen(proxy_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         return metadata_port, metadata_process.pid
 
-    def _create_instance_state_file(self, instance, state):
+    def _create_instance_metadata_file(self, instance, metadata):
         instance_dir = libvirt_utils.get_instance_path(instance)
-        state_file_path = os.path.join(instance_dir, 'state')
-        with open(state_file_path, "w") as state_file:
-            json.dump(state, state_file)
+        metadata_file_path = os.path.join(instance_dir, INSTANCE_METADATA_FILE)
+        with open(metadata_file_path, "w") as metadata_file:
+            json.dump(metadata, metadata_file)
 
     def start_qemu_instance(self, instance):
         cmdline, vnc_port, qmp_port, metadata_pid = self._create_qemu_machine(instance)
         LOG.debug('Cmdline: %s' % (cmdline))
         qemu_process = subprocess.Popen(cmdline)
-        state = {'pid': qemu_process.pid, 'vnc_port': vnc_port, 'qmp_port': qmp_port, 
-                       'metadata_pid': metadata_pid, 'iscsi_devices': {}, 'machine_start_time': int(round(time.time()))}
-        self._create_instance_state_file(instance, state)
+        metadata = {'pid': qemu_process.pid, 'vnc_port': vnc_port, 'qmp_port': qmp_port, 
+                    'metadata_pid': metadata_pid, 'iscsi_devices': {}, 'machine_start_time': int(round(time.time()))}
+        self._create_instance_metadata_file(instance, metadata)
 
     def _next_vnc_display(self):
         port = self._get_available_port(VNC_BASE_PORT, 100)
@@ -540,8 +522,7 @@ class QemuWinDriver(driver.ComputeDriver):
 
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info=None, block_device_info=None):
-        name = instance['name']
-        LOG.info("qemuwin.QemuWinDriver creating %s." % name)
+        LOG.info("qemuwin.QemuWinDriver creating %s." % instance['name'])
         LOG.info("Instance Data %s." % instance)
         state = power_state.RUNNING
         disk_info = blockinfo.get_disk_info('qemu',
@@ -591,9 +572,8 @@ class QemuWinDriver(driver.ComputeDriver):
         if not fs_format:
             fs_format = CONF.default_ephemeral_format
 
-        if not CONF.libvirt_images_type == "lvm":
-            libvirt_utils.create_image('raw', target,
-                                       '%d%c' % (local_size, unit))
+        libvirt_utils.create_image('raw', target,
+                                   '%d%c' % (local_size, unit))
         if fs_format:
             utils.mkfs(fs_format, target, label)
 
@@ -609,21 +589,18 @@ class QemuWinDriver(driver.ComputeDriver):
             with open(state_file_path, 'r') as state_file:
                 return json.load(state_file)
         except Exception:
-            return self.create_host_state()
+            return self._create_host_state_file()
 
-    def _create_host_state_file(self, host_state):
+    def _create_host_state_file(self):
         instances_path = CONF.instances_path
         state_file_path = os.path.join(instances_path, 'host_state')
-        with open(state_file_path, "w") as state_file:
-            json.dump({'uuid': host_state['uuid'], 'arch': host_state['arch'], 'next_volume_index': host_state['next_volume_index']}, state_file)
-
-    def create_host_state(self):
         host_state = {}
         host_state['uuid'] = self._create_host_uuid()
         host_state['arch'] = self._get_host_arch()
         host_state['next_volume_index'] = 0
-        self._create_host_state_file(host_state)
-        return host_state
+        with open(state_file_path, "w") as state_file:
+            json.dump({'uuid': host_state['uuid'], 'arch': host_state['arch'], 
+                       'next_volume_index': host_state['next_volume_index']}, state_file)
 
     @staticmethod
     def _get_host_arch():
@@ -691,19 +668,10 @@ class QemuWinDriver(driver.ComputeDriver):
         model = CONF.libvirt_cpu_model
 
         if mode is None:
-            if CONF.libvirt_type == "kvm" or CONF.libvirt_type == "qemu":
-                mode = "host-model"
-            else:
-                mode = "none"
-
+            mode = "host-model"
+            
         if mode == "none":
             return None
-
-        if CONF.libvirt_type != "kvm" and CONF.libvirt_type != "qemu":
-            msg = _("Config requested an explicit CPU model, but "
-                    "the current libvirt hypervisor '%s' does not "
-                    "support selecting CPU models") % CONF.libvirt_type
-            raise exception.Invalid(msg)
 
         if mode == "custom" and model is None:
             msg = _("Config requested a custom CPU model, but no "
@@ -735,8 +703,7 @@ class QemuWinDriver(driver.ComputeDriver):
         :returns: hypervisor type (ex. qemu)
 
         """
-
-        return "qemu"
+        return HYPERVISOR_TYPE
 
     def get_hypervisor_version(self):
         """Get hypervisor version.
@@ -744,8 +711,7 @@ class QemuWinDriver(driver.ComputeDriver):
         :returns: hypervisor version (ex. 12003)
 
         """
-        # TODO qemu --version?
-        return "2.1.0"
+        return HYPERVISOR_VERSION
 
     def set_cache_mode(self, conf):
         """Set cache mode on LibvirtConfigGuestDisk object."""
@@ -864,7 +830,6 @@ class QemuWinDriver(driver.ComputeDriver):
 
         sysinfo.system_serial = self.get_host_uuid()
         sysinfo.system_uuid = instance['uuid']
-        LOG.debug('QEMUWINDRIVER: get guest config sysinfo: %s' % (sysinfo))
 
         return sysinfo
 
@@ -1366,7 +1331,7 @@ class QemuWinDriver(driver.ComputeDriver):
 
     def _get_qmp_connection(self, instance):
         try:
-            state = self._get_instance_state(instance)
+            state = self._get_instance_metadata(instance)
             if (state is not None):
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.connect(('127.0.0.1', state['qmp_port']))
@@ -1400,7 +1365,7 @@ class QemuWinDriver(driver.ComputeDriver):
             LOG.debug('QEMUWINDRIVER: Could not run QMP command because socket failed')
             return None
 
-    def _get_machine_status(self, instance):
+    def _get_qmp_instance_status(self, instance):
         json_string = self._run_qmp_command(instance, QMP_MACHINE_STATUS)
         is_running = False
         status = None
@@ -1412,7 +1377,7 @@ class QemuWinDriver(driver.ComputeDriver):
             is_running = machine_status['return']['running']
             status = machine_status['return']['status']
         else :
-            state = self._get_instance_state(instance)
+            state = self._get_instance_metadata(instance)
             if (state is not None and 'expected_state' in state):
                 if (state['expected_state'] == 'running'):
                     status = 'internal-error'
@@ -1465,23 +1430,23 @@ class QemuWinDriver(driver.ComputeDriver):
         pass
 
     def power_off(self, instance):
-        running, status = self._get_machine_status(instance)
+        running, status = self._get_qmp_instance_status(instance)
         if running:
             self._run_qmp_command(instance, QMP_SHUTDOWN_COMMAND)
-            running, current_status = self._get_machine_status(instance)
+            running, current_status = self._get_qmp_instance_status(instance)
             remaining_retries = POWEROFF_RETRIES
             while (current_status != 'shutdown') and (remaining_retries > 0):
                 time.sleep(POWEROFF_RETRY_INTERVAL)
-                running, current_status = self._get_machine_status(instance)
+                running, current_status = self._get_qmp_instance_status(instance)
                 remaining_retries -= 1
             self._run_qmp_command(instance, QMP_STOP_COMMAND, suppressOutput=True)
-            state = self._get_instance_state(instance)
+            state = self._get_instance_metadata(instance)
             if state is not None:
                 state['expected_state'] = 'shutdown'
-                self._create_instance_state_file(instance, state)
+                self._create_instance_metadata_file(instance, state)
 
     def power_on(self, context, instance, network_info, block_device_info):
-        state = self._get_instance_state(instance)
+        state = self._get_instance_metadata(instance)
         if state is not None:
             cmdline, vnc_port, qmp_port = self._create_qemu_machine(instance)
             qemu_process = subprocess.Popen(cmdline)
@@ -1491,7 +1456,7 @@ class QemuWinDriver(driver.ComputeDriver):
             state['expected_state'] = 'running'
             if 'iscsi_devices' not in state:
                 state['iscsi_devices'] = {}
-            self._create_instance_state_file(instance, state)
+            self._create_instance_metadata_file(instance, state)
 
     def soft_delete(self, instance):
         pass
@@ -1515,12 +1480,12 @@ class QemuWinDriver(driver.ComputeDriver):
 
 
 #TODO: This without the instance (maybe getting the name and searching the instance dir?)
-    def _get_instance_state(self, instance):
+    def _get_instance_metadata(self, instance):
         instance_dir = libvirt_utils.get_instance_path(instance)
-        state_file_path = os.path.join(instance_dir, 'state')
+        metadata_file_path = os.path.join(instance_dir, INSTANCE_METADATA_FILE)
         try:
-            with open(state_file_path, 'r') as state_file:
-                return json.load(state_file)
+            with open(metadata_file_path, 'r') as metadata_file:
+                return json.load(metadata_file)
         except Exception:
             return None
     
@@ -1533,29 +1498,29 @@ class QemuWinDriver(driver.ComputeDriver):
             ctypes.windll.kernel32.CloseHandle(handle)
             time.sleep(5)
 
-        state = self._get_instance_state(instance)
-        if (state is not None):
-            _kill(state['pid'])
-            _kill(state['metadata_pid'])
+        metadata = self._get_instance_metadata(instance)
+        if (metadata is not None):
+            _kill(metadata['pid'])
+            _kill(metadata['metadata_pid'])
         shutil.rmtree(libvirt_utils.get_instance_path(instance), True)
 
     def _execute_iscsi_command(self, cmd, arguments=False):
+        iscsi_cmd = '%s %s' % (ISCSI_CLI, cmd)
         if arguments:
-            p = subprocess.Popen('%s %s %s' % (ISCSI_CLI, cmd, arguments), stdout=subprocess.PIPE)
-        else:
-            p = subprocess.Popen('%s %s' % (ISCSI_CLI, cmd), stdout=subprocess.PIPE)
+            iscsi_cmd += (' %s' % arguments)
+        p = subprocess.Popen(iscsi_cmd, stdout=subprocess.PIPE)
         out, err = p.communicate()
         return (out, err)
 
     def _list_targets(self):
-        out, err = self._execute_iscsi_command(LIST_TARGETS_CMD)
+        out, err = self._execute_iscsi_command(ISCSI_LIST_TARGETS_CMD)
         lines = out.splitlines()
         target_list = []
         list_started_string = 'Targets List:'
         list_started = False
         for line in lines:
             raw_line = line.strip()
-            if raw_line == COMMAND_END_MESSAGE:
+            if raw_line == ISCSI_COMMAND_END_MESSAGE:
                 break
             if list_started:
                 target_list.append(raw_line)
@@ -1564,16 +1529,16 @@ class QemuWinDriver(driver.ComputeDriver):
         return target_list
 
     def _add_target_portal(self, portal_address):
-        out, err = self._execute_iscsi_command(ADD_TARGET_PORTAL_CMD, portal_address)
+        out, err = self._execute_iscsi_command(ISCSI_ADD_TARGET_PORTAL_CMD, portal_address)
 
     def _login_target(self, target):
-        out, err = self._execute_iscsi_command(LOGIN_CMD, target)
+        out, err = self._execute_iscsi_command(ISCSI_LOGIN_CMD, target)
 
     def _logout_target(self, session_id):
-        out, err = self._execute_iscsi_command(LOGOUT_CMD, session_id)
+        out, err = self._execute_iscsi_command(ISCSI_LOGOUT_CMD, session_id)
 
     def _connected_targets(self):
-        out, err = self._execute_iscsi_command(TARGET_MAPPINGS_CMD)
+        out, err = self._execute_iscsi_command(ISCSI_TARGET_MAPPINGS_CMD)
         lines = out.splitlines()
         is_target_data = False
         mappings = []
@@ -1592,7 +1557,7 @@ class QemuWinDriver(driver.ComputeDriver):
         return mappings
 
     def _get_physical_drive(self, target):
-        out, err = self._execute_iscsi_command(LIST_SESSIONS_CMD)
+        out, err = self._execute_iscsi_command(ISCSI_LIST_SESSIONS_CMD)
         lines = out.splitlines()
         is_disk_device = False
         is_target = False
@@ -1615,7 +1580,7 @@ class QemuWinDriver(driver.ComputeDriver):
                 return line_data[1].strip()
 
     def _get_iscsi_session_id(self, target):
-        out, err = self._execute_iscsi_command(LIST_SESSIONS_CMD)
+        out, err = self._execute_iscsi_command(ISCSI_LIST_SESSIONS_CMD)
         lines = out.splitlines()
         is_disk_device = False
         is_target = False
@@ -1630,6 +1595,9 @@ class QemuWinDriver(driver.ComputeDriver):
                 if (line_data[1].strip() == target) and (session_id is not None):
                     return session_id
         return None
+
+    def _run_qmp_human_monitor_command(self, instance, command):
+        return self._run_qmp_command(instance, QMP_HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (QMP_COMMAND_LINE, command))
 
     def attach_volume(self, context, connection_info, instance, mountpoint,
                       encryption=None):
@@ -1647,10 +1615,10 @@ class QemuWinDriver(driver.ComputeDriver):
         physical_drive = physical_drive.replace("\\", "\\\\")
         LOG.debug('QEMUWINDRIVER: volume connection physical drive %s' % (physical_drive))
 
-        instance_state = self._get_instance_state(instance)
+        instance_metadata = self._get_instance_metadata(instance)
         next_volume_index = 0
         while True:
-            if next_volume_index not in instance_state['iscsi_devices']:
+            if next_volume_index not in instance_metadata['iscsi_devices']:
                 break
             next_volume_index += 1
 
@@ -1659,45 +1627,49 @@ class QemuWinDriver(driver.ComputeDriver):
         drive_add = 'drive_add 10 file=%s,if=none,id=%s' % (physical_drive, drive_id)
         device_add = 'device_add virtio-blk-pci,drive=%s,id=%s' % (drive_id, device_id)
 
-        result_drive_add = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, drive_add))
-        json_result = json.loads(result_drive_add)
-        if 'return' in json_result and json_result['return'].strip() == 'OK':
-            result_device_add = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, device_add))
-            json_result = json.loads(result_device_add)
-            if 'return' in json_result and (json_result['return'].strip() != 'OK' and json_result['return'].strip() != ''):
+        def _check_qmp_result(json_result, expected):
+            if 'return' not in json_result:
+                return False
+            elif json_result['return'].strip() not in expected:
+                return False
+            return True
+
+        result_drive_add = self._run_qmp_human_monitor_command(instance, drive_add)
+        json_result_drive_add = json.loads(result_drive_add)
+        if _check_qmp_result(json_result_drive_add, ['OK']):
+            result_device_add = self._run_qmp_human_monitor_command(instance, device_add)
+            json_result_device_add = json.loads(result_device_add)
+            if _check_qmp_result(json_result_device_add, ['OK', '']):
                 return False
         else:
             return False
 
-        if instance_name not in self._mounts:
-            self._mounts[instance_name] = {}
-        self._mounts[instance_name][mountpoint] = connection_info
-        instance_state['iscsi_devices'][next_volume_index] = connection_info['data']['target_iqn']
-        self._create_instance_state_file(instance, instance_state)
+        instance_metadata['iscsi_devices'][next_volume_index] = connection_info['data']['target_iqn']
+        self._create_instance_metadata_file(instance, instance_metadata)
         return True
 
     def detach_volume(self, connection_info, instance, mountpoint,
                       encryption=None):
         """Detach the disk attached to the instance."""
         try:
-            instance_state = self._get_instance_state(instance)
+            instance_metadata = self._get_instance_metadata(instance)
             remove_index = None
-            if 'iscsi_devices' in instance_state:
-                for index in instance_state['iscsi_devices']:
-                    if instance_state['iscsi_devices'][index] == connection_info['data']['target_iqn']:
+            if 'iscsi_devices' in instance_metadata:
+                for index in instance_metadata['iscsi_devices']:
+                    if instance_metadata['iscsi_devices'][index] == connection_info['data']['target_iqn']:
                         remove_index = index
                         drive_id = 'drive-scsi0-0-0-%s' % (index)
                         device_id = 'scsi0-0-0-%s' % (index)
                         drive_del = 'drive_del %s' % (drive_id)
                         device_del = 'device_del %s' % (device_id)
-                        result_device_del = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, device_del))
-                del instance_state['iscsi_devices'][remove_index]
-                self._create_instance_state_file(instance, instance_state)
+                        result_device_del = self._run_qmp_human_monitor_command(instance, device_del)
+                        break
+                del instance_metadata['iscsi_devices'][remove_index]
+                self._create_instance_metadata_file(instance, instance_metadata)
 
             session_id = self._get_iscsi_session_id(connection_info['data']['target_iqn'])
             if session_id is not None:
                 self._logout_target()
-                del self._mounts[instance['name']][mountpoint]
         except KeyError:
             pass
         return True
@@ -1705,38 +1677,28 @@ class QemuWinDriver(driver.ComputeDriver):
     def swap_volume(self, old_connection_info, new_connection_info,
                     instance, mountpoint):
         """Replace the disk attached to the instance."""
-        instance_name = instance['name']
-        if instance_name not in self._mounts:
-            self._mounts[instance_name] = {}
-        self._mounts[instance_name][mountpoint] = new_connection_info
+        # TODO
         return True
 
     def attach_interface(self, instance, image_meta, vif):
-        if vif['id'] in self._interfaces:
-            raise exception.InterfaceAttachFailed('duplicate')
-        self._interfaces[vif['id']] = vif
+        pass
 
     def detach_interface(self, instance, vif):
-        try:
-            del self._interfaces[vif['id']]
-        except KeyError:
-            raise exception.InterfaceDetachFailed('not attached')
+        pass
 
-    def _get_instance_status(self, instance):
-      is_running, qmp_status = self._get_machine_status(instance)
+    def _get_power_state(self, instance):
+      is_running, qmp_status = self._get_qmp_instance_status(instance)
       if (qmp_status is None):
-          instance_status = power_state.NOSTATE
-      elif (qmp_status in ['running', 'debug']):
-          instance_status = power_state.RUNNING
-      elif (qmp_status in ['inmigrate', 'io-error', 'paused', 'postmigrate', 'prelaunch', 'finish-migrate', 'restore-vm', 'watchdog', 'save-vm']):
-          instance_status = power_state.PAUSED
-      elif (qmp_status == 'shutdown'):
-          instance_status = power_state.SHUTDOWN
-      elif (qmp_status == 'internal-error'):
-          instance_status = power_state.CRASHED
-      else :
-          instance_status = power_state.NOSTATE
-      return instance_status
+          return power_state.NOSTATE
+      if (qmp_status in ['running', 'debug']):
+          return power_state.RUNNING
+      if (qmp_status in ['inmigrate', 'io-error', 'paused', 'postmigrate', 'prelaunch', 'finish-migrate', 'restore-vm', 'watchdog', 'save-vm']):
+          return power_state.PAUSED
+      if (qmp_status == 'shutdown'):
+          return power_state.SHUTDOWN
+      if (qmp_status == 'internal-error'):
+          return power_state.CRASHED
+      return power_state.NOSTATE
 
     def _instance_exists(self, instance):
       list_of_instances = self.list_instances()
@@ -1745,41 +1707,39 @@ class QemuWinDriver(driver.ComputeDriver):
     def get_info(self, instance):
         if not(self._instance_exists(instance)):
             raise exception.InstanceNotFound(instance_id=instance['name'])
-        instance_status = self._get_instance_status(instance)
-        instance_state = self._get_instance_state(instance)
-        cputime = (int(round(time.time())) - int(instance_state['machine_start_time']))*(10**6)
+        instance_power_state = self._get_power_state(instance)
+        instance_metadata = self._get_instance_metadata(instance)
+        cputime = (int(round(time.time())) - int(instance_metadata['machine_start_time']))*(10**6)
         result_cpus = self._run_qmp_command(instance, QMP_QUERY_CPUS)
         num_cpu = 0
         if (result_cpus is not None):
             num_cpu = len(json.loads(result_cpus))
-        return {'state': instance_status,
+        return {'state': instance_power_state,
                 'max_mem': 0,
                 'mem': 0,
                 'num_cpu': num_cpu,
                 'cpu_time': cputime}
 
-    def get_value(entry):
+    def _get_value(entry):
         values = entry.split("=")
         return values[1]
 
     def get_diagnostics(self, instance):
         if not(self._instance_exists(instance)):
             raise exception.InstanceNotFound(instance_id=instance['name'])
-        result_blockstats = self._run_qmp_command(instance, HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (COMMAND_LINE, "info blockstats"))
-        datastring = json.loads(result_blockstats)
-        solv = datastring['return']
-        resolv = solv.split("\n")
-        output = {}
-        for line in resolv:
-            if (line.strip() != ''):
-                opts = line.split()
-                guest_disk = opts[0].strip(':') 
-                output[guest_disk + "_read_req"] = get_value(opts[1])
-                output[guest_disk + "_read"] = get_value(opts[2])
-                output[guest_disk + "_write_req"] = get_value(opts[3])
-                output[guest_disk + "_write"] = get_value(opts[4])
-                output[guest_disk + "_errors"] = get_value(opts[5])
-        return output
+        result_blockstats = self._run_qmp_human_monitor_command(instance, "info blockstats")
+        json_blockstats = json.loads(result_blockstats)
+        diagnostics = {}
+        for block_device_line in json_blockstats['return'].split("\n"):
+            if (block_device_line.strip() != ''):
+                block_device_info = block_device_line.split()
+                guest_disk = block_device_info[0].strip(':') 
+                diagnostics[guest_disk + "_read_req"] = _get_value(block_device_info[1])
+                diagnostics[guest_disk + "_read"] = _get_value(block_device_info[2])
+                diagnostics[guest_disk + "_write_req"] = _get_value(block_device_info[3])
+                diagnostics[guest_disk + "_write"] = _get_value(block_device_info[4])
+                diagnostics[guest_disk + "_errors"] = _get_value(block_device_info[5])
+        return diagnostics
 
     def get_all_bw_counters(self, instances):
         """Return bandwidth usage counters for each interface on each
@@ -1823,7 +1783,7 @@ class QemuWinDriver(driver.ComputeDriver):
             return log_data
 
     def get_vnc_console(self, instance):
-        state = self._get_instance_state(instance)
+        state = self._get_instance_metadata(instance)
         port = state['vnc_port']
         host = CONF.vncserver_proxyclient_address
         return {'host': host, 'port': port, 'internal_access_path': None}
@@ -1940,8 +1900,8 @@ class QemuWinDriver(driver.ComputeDriver):
                'vcpus_used': 0,
                'memory_mb_used': memory_mb_used,
                'local_gb_used': local_gb_used,
-               'hypervisor_type': 'qemu',
-               'hypervisor_version': '2.1',
+               'hypervisor_type': HYPERVISOR_TYPE,
+               'hypervisor_version': HYPERVISOR_VERSION,
                'hypervisor_hostname': nodename,
                'disk_available_least': disk_available_least,
                'cpu_info': '?'}
@@ -2056,50 +2016,3 @@ class QemuWinDriver(driver.ComputeDriver):
 
     def list_instance_uuids(self):
         return []
-
-
-class FakeVirtAPI(virtapi.VirtAPI):
-    def instance_update(self, context, instance_uuid, updates):
-        return db.instance_update_and_get_original(context,
-                                                   instance_uuid,
-                                                   updates)
-
-    def aggregate_get_by_host(self, context, host, key=None):
-        return db.aggregate_get_by_host(context, host, key=key)
-
-    def aggregate_metadata_add(self, context, aggregate, metadata,
-                               set_delete=False):
-        return db.aggregate_metadata_add(context, aggregate['id'], metadata,
-                                         set_delete=set_delete)
-
-    def aggregate_metadata_delete(self, context, aggregate, key):
-        return db.aggregate_metadata_delete(context, aggregate['id'], key)
-
-    def security_group_get_by_instance(self, context, instance):
-        return db.security_group_get_by_instance(context, instance['uuid'])
-
-    def security_group_rule_get_by_security_group(self, context,
-                                                  security_group):
-        return db.security_group_rule_get_by_security_group(
-            context, security_group['id'])
-
-    def provider_fw_rule_get_all(self, context):
-        return db.provider_fw_rule_get_all(context)
-
-    def agent_build_get_by_triple(self, context, hypervisor, os, architecture):
-        return db.agent_build_get_by_triple(context,
-                                            hypervisor, os, architecture)
-
-    def instance_type_get(self, context, instance_type_id):
-        return db.instance_type_get(context, instance_type_id)
-
-    def block_device_mapping_get_all_by_instance(self, context, instance,
-                                                 legacy=True):
-        bdms = db.block_device_mapping_get_all_by_instance(context,
-                                                           instance['uuid'])
-        if legacy:
-            bdms = block_device.legacy_mapping(bdms)
-        return bdms
-
-    def block_device_mapping_update(self, context, bdm_id, values):
-        return db.block_device_mapping_update(context, bdm_id, values)
