@@ -231,6 +231,8 @@ PROCESS_TERMINATE = 1
 VNC_BASE_PORT = 5900
 QMP_CAPABILITY_WAIT = 3
 SOCKET_NOT_BOUND = 10061
+POWEROFF_RETRIES = 120
+POWEROFF_RETRY_INTERVAL = 1
 QMP_REBOOT_COMMAND = 'system_reset'
 QMP_SUSPEND_COMMAND = 'stop'
 QMP_RESUME_COMMAND = 'cont'
@@ -1467,11 +1469,11 @@ class QemuWinDriver(driver.ComputeDriver):
         if running:
             self._run_qmp_command(instance, QMP_SHUTDOWN_COMMAND)
             running, current_status = self._get_machine_status(instance)
-            tries = 120
-            while (current_status != 'shutdown') and (tries > 0):
-                time.sleep(1)
+            remaining_retries = POWEROFF_RETRIES
+            while (current_status != 'shutdown') and (remaining_retries > 0):
+                time.sleep(POWEROFF_RETRY_INTERVAL)
                 running, current_status = self._get_machine_status(instance)
-                tries -= 1
+                remaining_retries -= 1
             self._run_qmp_command(instance, QMP_STOP_COMMAND, suppressOutput=True)
             state = self._get_instance_state(instance)
             if state is not None:
