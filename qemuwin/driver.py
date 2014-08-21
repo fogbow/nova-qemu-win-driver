@@ -211,7 +211,11 @@ libvirt_opts = [
                 default='',
                 help='Shared secret to sign instance-id request'),
     cfg.StrOpt('qemu_home',
-                help='Path to home directory of QEMU binaries.')
+                default=None,
+                help='Path to home directory of QEMU binaries.'),
+    cfg.StrOpt('python_home',
+                default=None,
+                help='Path to python home directory.')
     ]
 
 CONF = cfg.CONF
@@ -411,7 +415,9 @@ class QemuWinDriver(driver.ComputeDriver):
 
     @staticmethod
     def qemuCommandNew(arch):
-        qemu_command = os.path.join(CONF.qemu_home, 'qemu-system-x86_64.exe')
+        qemu_command = 'qemu-system-x86_64.exe'
+        if CONF.qemu_home is not None:
+            qemu_command = os.path.join(CONF.qemu_home, 'qemu-system-x86_64.exe')
         LOG.debug('QEMUWINDRIVER: qemu binary location: %s' % (qemu_command))
         return [qemu_command]
 
@@ -494,8 +500,11 @@ class QemuWinDriver(driver.ComputeDriver):
     def _start_metadata_proxy(self, instance_id, tenant_id):
         metadata_port = self._get_ephemeral_port()
         current_path = os.path.dirname(__file__)
-        proxy_cmd = ('python %s\metadataproxy.py --instance_id %s --tenant_id %s --metadata_server %s --metadata_port %s '
-                     '--metadata_secret "%s" --port %s' % (current_path, instance_id, tenant_id, CONF.nova_metadata_host, 
+        python_path = 'python'
+        if CONF.python_home is not None:
+            python_path = os.path.join(CONF.python_home, 'python')
+        proxy_cmd = ('%s %s\metadataproxy.py --instance_id %s --tenant_id %s --metadata_server %s --metadata_port %s '
+                     '--metadata_secret "%s" --port %s' % (python_path, current_path, instance_id, tenant_id, CONF.nova_metadata_host, 
                                                            CONF.nova_metadata_port, CONF.nova_metadata_shared_secret, metadata_port))
         LOG.debug('metadataproxy: %s' % proxy_cmd)
         metadata_process = subprocess.Popen(proxy_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
