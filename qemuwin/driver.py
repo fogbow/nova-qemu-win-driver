@@ -237,6 +237,7 @@ QMP_RESUME_COMMAND = 'cont'
 QMP_STOP_COMMAND = 'quit'
 QMP_SHUTDOWN_COMMAND = 'system_powerdown'
 QMP_MACHINE_STATUS = 'query-status'
+QMO_QUERY_CPUS = 'query-cpus'
 HUMAN_MONITOR_COMMAND = 'human-monitor-command'
 COMMAND_LINE = 'command-line'
 
@@ -1745,7 +1746,7 @@ class QemuWinDriver(driver.ComputeDriver):
         instance_status = self._get_instance_status(instance)
         instance_state = self._get_instance_state(instance)
         cputime = (int(round(time.time())) - int(instance_state['machine_start_time']))*(10**6)
-        result_cpus = self._run_qmp_command(instance, 'query-cpus')
+        result_cpus = self._run_qmp_command(instance, QMP_QUERY_CPUS)
         num_cpu = 0
         if (result_cpus is not None):
             num_cpu = len(json.loads(result_cpus))
