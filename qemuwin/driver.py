@@ -1395,14 +1395,27 @@ class QemuWinDriver(driver.ComputeDriver):
             return commandOuput
         else:
             LOG.debug('QEMUWINDRIVER: Could not run QMP command because socket failed')
+            return None
 
     def _get_machine_status(self, instance):
         json_string = self._run_qmp_command(instance, QMP_MACHINE_STATUS)
-        machine_status = json.loads(json_string)
-        # returns two fields (running, status)
-        # running is boolean, true if running or false if not
-        # status is a string with values like running, paused, shutdown
-        return (machine_status['return']['running'], machine_status['return']['status'])
+        is_running = False
+        status = None
+        if json_string is not None:
+            machine_status = json.loads(json_string)            
+            # returns two fields (running, status)
+            # running is boolean, true if running or false if not
+            # status is a string with values like running, paused, shutdown
+            is_running = machine_status['return']['running']
+            status = machine_status['return']['status']
+        else :
+            state = self._get_instance_state(instance)
+            if (state is not None and 'expected_state' in state):
+                if (state['expected_state'] == 'running'):
+                    status = 'internal-error'
+                elif (state['expected_state'] == 'shutdown'):
+                    status = 'shutdown'
+        return (is_running, status)
 
     def reboot(self, context, instance, network_info, reboot_type,
                block_device_info=None, bad_volumes_callback=None):
@@ -1459,6 +1472,10 @@ class QemuWinDriver(driver.ComputeDriver):
                 running, current_status = self._get_machine_status(instance)
                 tries -= 1
             self._run_qmp_command(instance, QMP_STOP_COMMAND, suppressOutput=True)
+            state = self._get_instance_state(instance)
+            if state is not None:
+                state['expected_state'] = 'shutdown'
+                self._create_instance_state_file(instance, state)
 
     def power_on(self, context, instance, network_info, block_device_info):
         state = self._get_instance_state(instance)
@@ -1468,6 +1485,7 @@ class QemuWinDriver(driver.ComputeDriver):
             state['pid'] = qemu_process.pid
             state['qmp_port'] = qmp_port
             state['vnc_port'] = vnc_port
+            state['expected_state'] = 'running'
             if 'iscsi_devices' not in state:
                 state['iscsi_devices'] = {}
             self._create_instance_state_file(instance, state)
@@ -1703,7 +1721,9 @@ class QemuWinDriver(driver.ComputeDriver):
 
     def _get_instance_status(self, instance):
       is_running, qmp_status = self._get_machine_status(instance)
-      if (qmp_status in ['running', 'debug']):
+      if (qmp_status is None):
+          instance_status = power_state.NOSTATE
+      elif (qmp_status in ['running', 'debug']):
           instance_status = power_state.RUNNING
       elif (qmp_status in ['inmigrate', 'io-error', 'paused', 'postmigrate', 'prelaunch', 'finish-migrate', 'restore-vm', 'watchdog', 'save-vm']):
           instance_status = power_state.PAUSED
@@ -1726,11 +1746,13 @@ class QemuWinDriver(driver.ComputeDriver):
         instance_state = self._get_instance_state(instance)
         cputime = (int(round(time.time())) - int(instance_state['machine_start_time']))*(10**6)
         result_cpus = self._run_qmp_command(instance, 'query-cpus')
-        datastring = json.loads(result_cpus)
+        num_cpu = 0
+        if (result_cpus is not None):
+            num_cpu = len(json.loads(result_cpus))
         return {'state': instance_status,
                 'max_mem': 0,
                 'mem': 0,
-                'num_cpu': datastring.__len__(),
+                'num_cpu': num_cpu,
                 'cpu_time': cputime}
 
     def get_value(entry):
