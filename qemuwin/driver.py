@@ -1757,16 +1757,6 @@ class QemuWinDriver(driver.ComputeDriver):
         bw = []
         return bw
 
-    def get_all_volume_usage(self, context, compute_host_bdms):
-        """Return usage info for volumes attached to vms on
-           a given host.
-        """
-        volusage = []
-        return volusage
-
-    def block_stats(self, instance_name, disk_id):
-        return [0L, 0L, 0L, 0L, None]
-
     def interface_stats(self, instance_name, iface_id):
         return [0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L]
 
@@ -2021,7 +2011,8 @@ class QemuWinDriver(driver.ComputeDriver):
         return _NODES
 
     def instance_on_disk(self, instance):
-        return False
+        instance_path = os.path.join(CONF.instances_path, instance['uuid'])
+        return os.access(instance_path, OS.W_OK)
 
     def list_instance_uuids(self):
-        return []
+        return self.list_instances()
