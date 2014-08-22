@@ -1608,10 +1608,7 @@ class QemuWinDriver(driver.ComputeDriver):
     def _run_qmp_human_monitor_command(self, instance, command):
         return self._run_qmp_command(instance, QMP_HUMAN_MONITOR_COMMAND, '{"%s": "%s"}' % (QMP_COMMAND_LINE, command))
 
-    def attach_volume(self, context, connection_info, instance, mountpoint,
-                      encryption=None):
-        """Attach the disk to the instance at mountpoint using info."""
-        instance_name = instance['name']
+    def _attach_volume(self, connection_info, instance, mountpoint):
         LOG.debug('QEMUWINDRIVER: volume connection info %s and mountpoint %s' % (connection_info, mountpoint))
 
         target_portal_address = connection_info['data']['target_portal'].split(':')
@@ -1625,16 +1622,22 @@ class QemuWinDriver(driver.ComputeDriver):
         LOG.debug('QEMUWINDRIVER: volume connection physical drive %s' % (physical_drive))
 
         instance_metadata = self._get_instance_metadata(instance)
+        LOG.debug('QEMUWINDRIVER: attach new volume with instance_metadata %s' % (instance_metadata))
         next_volume_index = 0
+        next_drive_add_index = 10
         while True:
-            if next_volume_index not in instance_metadata['iscsi_devices']:
+            LOG.debug('QEMUWINDRIVER: attach new volume index exists? %s' % (next_volume_index not in instance_metadata['iscsi_devices']))
+            if str(next_volume_index) not in instance_metadata['iscsi_devices']:
                 break
             next_volume_index += 1
+            next_drive_add_index += 1
+            LOG.debug('QEMUWINDRIVER: attach new volume incrementing next_volume_index %s and next_drive_add_index %s' % (next_volume_index, next_drive_add_index))
 
         drive_id = 'drive-scsi0-0-0-%s' % (next_volume_index)
         device_id = 'scsi0-0-0-%s' % (next_volume_index)
-        drive_add = 'drive_add 10 file=%s,if=none,id=%s' % (physical_drive, drive_id)
+        drive_add = 'drive_add %s file=%s,if=none,id=%s' % (next_drive_add_index, physical_drive, drive_id)
         device_add = 'device_add virtio-blk-pci,drive=%s,id=%s' % (drive_id, device_id)
+        LOG.debug('QEMUWINDRIVER: attach new volume on index %s and driveid %s and deviceid %s' % (next_volume_index, drive_id, device_id))
 
         def _check_qmp_result(json_result, expected):
             if 'return' not in json_result:
@@ -1644,11 +1647,13 @@ class QemuWinDriver(driver.ComputeDriver):
             return True
 
         result_drive_add = self._run_qmp_human_monitor_command(instance, drive_add)
+        LOG.debug('QEMUWINDRIVER: new volume drive add result %s' % (result_drive_add))
         json_result_drive_add = json.loads(result_drive_add)
         if _check_qmp_result(json_result_drive_add, ['OK']):
             result_device_add = self._run_qmp_human_monitor_command(instance, device_add)
+            LOG.debug('QEMUWINDRIVER: new volume device add result %s' % (result_device_add))
             json_result_device_add = json.loads(result_device_add)
-            if _check_qmp_result(json_result_device_add, ['OK', '']):
+            if not _check_qmp_result(json_result_device_add, ['OK', '']):
                 return False
         else:
             return False
@@ -1656,6 +1661,11 @@ class QemuWinDriver(driver.ComputeDriver):
         instance_metadata['iscsi_devices'][next_volume_index] = connection_info['data']['target_iqn']
         self._create_instance_metadata_file(instance, instance_metadata)
         return True
+
+    def attach_volume(self, context, connection_info, instance, mountpoint,
+                      encryption=None):
+        """Attach the disk to the instance at mountpoint using info."""
+        return self._attach_volume(connection_info, instance, mountpoint)
 
     def detach_volume(self, connection_info, instance, mountpoint,
                       encryption=None):
@@ -1678,7 +1688,7 @@ class QemuWinDriver(driver.ComputeDriver):
 
             session_id = self._get_iscsi_session_id(connection_info['data']['target_iqn'])
             if session_id is not None:
-                self._logout_target()
+                self._logout_target(session_id)
         except KeyError:
             pass
         return True
@@ -1686,8 +1696,10 @@ class QemuWinDriver(driver.ComputeDriver):
     def swap_volume(self, old_connection_info, new_connection_info,
                     instance, mountpoint):
         """Replace the disk attached to the instance."""
-        # TODO
-        return True
+        is_detached = self.detach_volume(old_connection_info, instance, mountpoint)
+        if is_detached:
+            return self._attach_volume(new_connection_info, instance, mountpoint)
+        return False
 
     def attach_interface(self, instance, image_meta, vif):
         pass
