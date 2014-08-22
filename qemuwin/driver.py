@@ -1612,7 +1612,7 @@ class QemuWinDriver(driver.ComputeDriver):
                       encryption=None):
         """Attach the disk to the instance at mountpoint using info."""
         instance_name = instance['name']
-        LOG.debug('QEMUWINDRIVER: volume connection info %s' % connection_info)
+        LOG.debug('QEMUWINDRIVER: volume connection info %s and mountpoint %s' % (connection_info, mountpoint))
 
         target_portal_address = connection_info['data']['target_portal'].split(':')
         self._add_target_portal(target_portal_address[0])
