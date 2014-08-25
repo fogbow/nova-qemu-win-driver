@@ -1401,7 +1401,7 @@ class QemuWinDriver(driver.ComputeDriver):
 
     @staticmethod
     def get_host_ip_addr():
-        return socket.gethostbyname(socket.gethostname())
+        return CONF.my_ip
 
     def set_admin_password(self, instance, new_pass):
         pass
@@ -2027,9 +2027,7 @@ class QemuWinDriver(driver.ComputeDriver):
         pass
 
     def get_volume_connector(self, instance):
-        host_ip = self.get_host_ip_addr()
-        hostname = socket.gethostname()
-        connector = {'ip': host_ip, 
+        connector = {'ip': CONF.my_ip, 
                      'host': CONF.host}
         initiator_name = self._get_initiator_name()
         if initiator_name is not None:
