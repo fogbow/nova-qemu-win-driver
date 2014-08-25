@@ -1401,7 +1401,7 @@ class QemuWinDriver(driver.ComputeDriver):
 
     @staticmethod
     def get_host_ip_addr():
-        return '192.168.0.1'
+        return socket.gethostbyname(socket.gethostname())
 
     def set_admin_password(self, instance, new_pass):
         pass
@@ -1603,6 +1603,16 @@ class QemuWinDriver(driver.ComputeDriver):
                 line_data = clean_line.split(' : ')
                 if (line_data[1].strip() == target) and (session_id is not None):
                     return session_id
+        return None
+
+    def _get_initiator_name(self):
+        out, err = self._execute_iscsi_command(ISCSI_LIST_SESSIONS_CMD)
+        lines = out.splitlines()
+        for line in lines:
+            clean_line = line.strip()
+            if clean_line.startswith('Initiator Node Name'):
+                line_data = clean_line.split(' : ')
+                return line_data[1]
         return None
 
     def _run_qmp_human_monitor_command(self, instance, command):
@@ -2017,7 +2027,14 @@ class QemuWinDriver(driver.ComputeDriver):
         pass
 
     def get_volume_connector(self, instance):
-        return {'ip': '127.0.0.1', 'initiator': 'fake', 'host': 'fakehost'}
+        host_ip = self.get_host_ip_addr()
+        hostname = socket.gethostname()
+        connector = {'ip': host_ip, 
+                     'host': CONF.host}
+        initiator_name = self._get_initiator_name()
+        if initiator_name is not None:
+            connector['initiator'] = initiator_name
+        return connector
 
     def get_available_nodes(self, refresh=False):
         return _NODES
