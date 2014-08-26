@@ -239,6 +239,7 @@ PROCESS_TERMINATE = 1
 VNC_BASE_PORT = 5900
 QMP_CAPABILITY_WAIT = 3
 SOCKET_NOT_BOUND = 10061
+QEMU_STARTUP_TIMEOUT = 5
 POWEROFF_RETRIES = 120
 POWEROFF_RETRY_INTERVAL = 1
 
@@ -415,9 +416,10 @@ class QemuWinDriver(driver.ComputeDriver):
 
     @staticmethod
     def qemuCommandNew(arch):
-        qemu_command = 'qemu-system-x86_64.exe'
+        qemu_binary_string = 'qemu-system-%s.exe' % (arch)
+        qemu_command = qemu_binary_string
         if CONF.qemu_home is not None:
-            qemu_command = os.path.join(CONF.qemu_home, 'qemu-system-x86_64.exe')
+            qemu_command = os.path.join(CONF.qemu_home, qemu_binary_string)
         LOG.debug('QEMUWINDRIVER: qemu binary location: %s' % (qemu_command))
         return [qemu_command]
 
@@ -430,13 +432,13 @@ class QemuWinDriver(driver.ComputeDriver):
     def qemuCommandStr(cmd):
         return ' '.join(cmd)
 
-    def _create_qemu_machine(self, instance):
+    def _create_qemu_machine(self, instance, metadata_port, qemu_arch='i386'):
         instance_dir = libvirt_utils.get_instance_path(instance)
         xml_path = os.path.join(instance_dir, 'libvirt.xml')
         dom = minidom.parse(xml_path)
         cpu = self.getEl(dom, 'cpu')
         arch = self.getText(cpu, 'arch')
-        cmd = self.qemuCommandNew(arch)
+        cmd = self.qemuCommandNew(qemu_arch)
 
         memory = int(self.getText(dom, 'memory'))/1024
         self.qemuCommandAddArg(cmd, '-m', str(memory))
@@ -460,8 +462,6 @@ class QemuWinDriver(driver.ComputeDriver):
         serialSource = self.getEl(serial, 'source')
         self.qemuCommandAddArg(cmd, '-chardev', 'file,id=charserial0,path=%s' % serialSource.attributes['path'].value)
         self.qemuCommandAddArg(cmd, '-device', 'isa-serial,chardev=charserial0,id=serial0')
-
-        metadata_port, metadata_pid = self._start_metadata_proxy(instance['uuid'], instance['project_id'])
 
         interface = self.getEl(devices, 'interface')
         mac = self.getEl(interface, 'mac')
@@ -495,7 +495,7 @@ class QemuWinDriver(driver.ComputeDriver):
         qmp_port = self._get_ephemeral_port()
         self.qemuCommandAddArg(cmd, '-qmp', 'tcp:127.0.0.1:%s,server,nowait,nodelay' % (qmp_port))
 
-        return (self.qemuCommandStr(cmd), vnc_port, qmp_port, metadata_pid)
+        return (self.qemuCommandStr(cmd), vnc_port, qmp_port)
 
     def _start_metadata_proxy(self, instance_id, tenant_id):
         metadata_port = self._get_ephemeral_port()
@@ -516,13 +516,41 @@ class QemuWinDriver(driver.ComputeDriver):
         with open(metadata_file_path, "w") as metadata_file:
             json.dump(metadata, metadata_file)
 
+    def _check_machine_started(self, instance):
+        time.sleep(QEMU_STARTUP_TIMEOUT)
+        instance_dir = libvirt_utils.get_instance_path(instance)
+        console_log = os.path.join(instance_dir, 'console.log')
+        if os.path.isfile(console_log):
+            if os.path.getsize(console_log) > 0:
+                return True
+        return False
+
+
     def start_qemu_instance(self, instance):
-        cmdline, vnc_port, qmp_port, metadata_pid = self._create_qemu_machine(instance)
+
+        def _start_qemu_process(instance, metadata_port, qemu_arch):
+            cmdline, vnc_port, qmp_port = self._create_qemu_machine(instance, metadata_port, qemu_arch)
+            qemu_process = subprocess.Popen(cmdline)
+            metadata = {'pid': qemu_process.pid, 'vnc_port': vnc_port, 'qmp_port': qmp_port, 'qemu_arch': qemu_arch, 
+                        'metadata_pid': metadata_pid, 'metadata_port': metadata_port, 'iscsi_devices': {}, 
+                        'machine_start_time': int(round(time.time()))}
+            self._create_instance_metadata_file(instance, metadata)
+            return (cmdline, qemu_process.pid)
+
+        def _kill(pid):
+            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
+            ctypes.windll.kernel32.TerminateProcess(handle, -1)
+            ctypes.windll.kernel32.CloseHandle(handle)
+            time.sleep(5)
+
+        metadata_port, metadata_pid = self._start_metadata_proxy(instance['uuid'], instance['project_id'])
+        qemu_arch = 'i386'
+        cmdline, qemu_pid = _start_qemu_process(instance, metadata_port, qemu_arch)
+        if not self._check_machine_started(instance):
+            _kill(qemu_pid)
+            qemu_arch = 'x86_64'
+            cmdline, qemu_pid = _start_qemu_process(instance, metadata_port, qemu_arch)
         LOG.debug('Cmdline: %s' % (cmdline))
-        qemu_process = subprocess.Popen(cmdline)
-        metadata = {'pid': qemu_process.pid, 'vnc_port': vnc_port, 'qmp_port': qmp_port, 
-                    'metadata_pid': metadata_pid, 'iscsi_devices': {}, 'machine_start_time': int(round(time.time()))}
-        self._create_instance_metadata_file(instance, metadata)
 
     def _next_vnc_display(self):
         port = self._get_available_port(VNC_BASE_PORT, 100)
@@ -1340,10 +1368,10 @@ class QemuWinDriver(driver.ComputeDriver):
 
     def _get_qmp_connection(self, instance):
         try:
-            state = self._get_instance_metadata(instance)
-            if (state is not None):
+            metadata = self._get_instance_metadata(instance)
+            if (metadata is not None):
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.connect(('127.0.0.1', state['qmp_port']))
+                s.connect(('127.0.0.1', metadata['qmp_port']))
                 return s
         except Exception, e:
             pass
@@ -1449,23 +1477,23 @@ class QemuWinDriver(driver.ComputeDriver):
                 running, current_status = self._get_qmp_instance_status(instance)
                 remaining_retries -= 1
             self._run_qmp_command(instance, QMP_STOP_COMMAND, suppressOutput=True)
-            state = self._get_instance_metadata(instance)
-            if state is not None:
-                state['expected_state'] = 'shutdown'
-                self._create_instance_metadata_file(instance, state)
+            metadata = self._get_instance_metadata(instance)
+            if metadata is not None:
+                metadata['expected_state'] = 'shutdown'
+                self._create_instance_metadata_file(instance, metadata)
 
     def power_on(self, context, instance, network_info, block_device_info):
-        state = self._get_instance_metadata(instance)
-        if state is not None:
-            cmdline, vnc_port, qmp_port = self._create_qemu_machine(instance)
+        metadata = self._get_instance_metadata(instance)
+        if metadata is not None:
+            cmdline, vnc_port, qmp_port = self._create_qemu_machine(instance, metadata['metadata_port'], metadata['qemu_arch'])
             qemu_process = subprocess.Popen(cmdline)
-            state['pid'] = qemu_process.pid
-            state['qmp_port'] = qmp_port
-            state['vnc_port'] = vnc_port
-            state['expected_state'] = 'running'
-            if 'iscsi_devices' not in state:
-                state['iscsi_devices'] = {}
-            self._create_instance_metadata_file(instance, state)
+            metadata['pid'] = qemu_process.pid
+            metadata['qmp_port'] = qmp_port
+            metadata['vnc_port'] = vnc_port
+            metadata['expected_state'] = 'running'
+            if 'iscsi_devices' not in metadata:
+                metadata['iscsi_devices'] = {}
+            self._create_instance_metadata_file(instance, metadata)
 
     def soft_delete(self, instance):
         pass
@@ -1744,7 +1772,9 @@ class QemuWinDriver(driver.ComputeDriver):
         result_cpus = self._run_qmp_command(instance, QMP_QUERY_CPUS)
         num_cpu = 0
         if (result_cpus is not None):
-            num_cpu = len(json.loads(result_cpus))
+            json_result_cpus = json.loads(result_cpus)
+            if 'return' in json_result_cpus:
+                num_cpu = len(json_result_cpus['return'])
         return {'state': instance_power_state,
                 'max_mem': 0,
                 'mem': 0,
