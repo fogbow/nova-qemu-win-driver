@@ -43,6 +43,7 @@ import ctypes
 import socket
 import platform
 import wmi
+import multiprocessing
 
 from eventlet import greenio
 from eventlet import greenthread
@@ -93,6 +94,7 @@ from nova.virt.qemuwin import imagebackend
 from nova.virt.qemuwin import imagecache
 from nova.virt.qemuwin import utils as libvirt_utils
 from nova.virt.qemuwin import images
+from nova.virt.qemuwin import metadataproxy
 from nova.virt import netutils
 from nova import volume
 from nova.volume import encryptors
@@ -499,16 +501,13 @@ class QemuWinDriver(driver.ComputeDriver):
 
     def _start_metadata_proxy(self, instance_id, tenant_id):
         metadata_port = self._get_ephemeral_port()
-        current_path = os.path.dirname(__file__)
-        python_path = 'python'
-        if CONF.python_home is not None:
-            python_path = os.path.join(CONF.python_home, 'python')
-        proxy_cmd = ('%s %s\metadataproxy.py --instance_id %s --tenant_id %s --metadata_server %s --metadata_port %s '
-                     '--metadata_secret "%s" --port %s' % (python_path, current_path, instance_id, tenant_id, CONF.nova_metadata_host, 
-                                                           CONF.nova_metadata_port, CONF.nova_metadata_shared_secret, metadata_port))
-        LOG.debug('metadataproxy: %s' % proxy_cmd)
-        metadata_process = subprocess.Popen(proxy_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        return metadata_port, metadata_process.pid
+        parent_conn, child_conn = multiprocessing.Pipe()
+        metadata_process = multiprocessing.Process(target=metadataproxy.run_proxy_deamon, 
+                                args=(child_conn, instance_id, tenant_id, CONF.nova_metadata_port, CONF.nova_metadata_host, 
+                                      CONF.nova_metadata_shared_secret, metadata_port,))
+        metadata_process.start()
+        metadata_pid = parent_conn.recv()
+        return metadata_port, metadata_pid
 
     def _create_instance_metadata_file(self, instance, metadata):
         instance_dir = libvirt_utils.get_instance_path(instance)
