@@ -640,6 +640,7 @@ class QemuWinDriver(driver.ComputeDriver):
         with open(state_file_path, "w") as state_file:
             json.dump({'uuid': host_state['uuid'], 'arch': host_state['arch'], 
                        'next_volume_index': host_state['next_volume_index']}, state_file)
+        return host_state
 
     @staticmethod
     def _get_host_arch():
