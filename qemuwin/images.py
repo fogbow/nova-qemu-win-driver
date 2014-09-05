@@ -40,11 +40,15 @@ image_opts = [
     cfg.BoolOpt('force_raw_images',
                 default=True,
                 help='Force backing images to raw format'),
+    cfg.StrOpt('qemu_home',
+                default=None,
+                help='Path to home directory of QEMU binaries.'),
 ]
 
 CONF = cfg.CONF
 CONF.register_opts(image_opts)
 
+QEMU_IMG = os.path.join(CONF.qemu_home, 'qemu-img')
 
 class QemuImgInfo(object):
     BACKING_FILE_RE = re.compile((r"^(.*?)\s*\(actual\s+path\s*:"
@@ -168,13 +172,13 @@ def qemu_img_info(path):
     if not os.path.exists(path) and CONF.libvirt_images_type != 'rbd':
         return QemuImgInfo()
 
-    out, err = utils.execute('qemu-img', 'info', path)
+    out, err = utils.execute(QEMU_IMG, 'info', path)
     return QemuImgInfo(out)
 
 
 def convert_image(source, dest, out_format, run_as_root=False):
     """Convert image to other format."""
-    cmd = ('qemu-img', 'convert', '-O', out_format, source, dest)
+    cmd = (QEMU_IMG, 'convert', '-O', out_format, source, dest)
     utils.execute(*cmd, run_as_root=run_as_root)
 
 

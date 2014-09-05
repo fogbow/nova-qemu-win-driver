@@ -38,12 +38,17 @@ libvirt_opts = [
                 default=False,
                 help='Compress snapshot images when possible. This '
                      'currently applies exclusively to qcow2 images'),
+    cfg.StrOpt('qemu_home',
+                default=None,
+                help='Path to home directory of QEMU binaries.'),
     ]
 
 CONF = cfg.CONF
 CONF.register_opts(libvirt_opts)
 CONF.import_opt('instances_path', 'nova.compute.manager')
 LOG = logging.getLogger(__name__)
+
+QEMU_IMG = os.path.join(CONF.qemu_home, 'qemu-img')
 
 
 def execute(*args, **kwargs):
@@ -173,7 +178,7 @@ def create_image(disk_format, path, size):
                  M for Mebibytes, 'G' for Gibibytes, 'T' for Tebibytes).
                  If no suffix is given, it will be interpreted as bytes.
     """
-    execute('qemu-img', 'create', '-f', disk_format, path, size)
+    execute(QEMU_IMG, 'create', '-f', disk_format, path, size)
 
 
 def create_cow_image(backing_file, path, size=None):
@@ -184,7 +189,7 @@ def create_cow_image(backing_file, path, size=None):
     :param backing_file: Existing image on which to base the COW image
     :param path: Desired location of the COW image
     """
-    base_cmd = ['qemu-img', 'create', '-f', 'qcow2']
+    base_cmd = [QEMU_IMG, 'create', '-f', 'qcow2']
     cow_opts = []
     if backing_file:
         cow_opts += ['backing_file=%s' % backing_file]
@@ -510,7 +515,7 @@ def create_snapshot(disk_path, snapshot_name):
     :param disk_path: Path to disk image
     :param snapshot_name: Name of snapshot in disk image
     """
-    qemu_img_cmd = ('qemu-img', 'snapshot', '-c', snapshot_name, disk_path)
+    qemu_img_cmd = (QEMU_IMG, 'snapshot', '-c', snapshot_name, disk_path)
     # NOTE(vish): libvirt changes ownership of images
     execute(*qemu_img_cmd, run_as_root=True)
 
@@ -521,7 +526,7 @@ def delete_snapshot(disk_path, snapshot_name):
     :param disk_path: Path to disk image
     :param snapshot_name: Name of snapshot in disk image
     """
-    qemu_img_cmd = ('qemu-img', 'snapshot', '-d', snapshot_name, disk_path)
+    qemu_img_cmd = (QEMU_IMG, 'snapshot', '-d', snapshot_name, disk_path)
     # NOTE(vish): libvirt changes ownership of images
     execute(*qemu_img_cmd, run_as_root=True)
 
@@ -537,7 +542,7 @@ def extract_snapshot(disk_path, source_fmt, snapshot_name, out_path, dest_fmt):
     if dest_fmt == 'iso':
         dest_fmt = 'raw'
 
-    qemu_img_cmd = ('qemu-img', 'convert', '-f', source_fmt, '-O', dest_fmt)
+    qemu_img_cmd = (QEMU_IMG, 'convert', '-f', source_fmt, '-O', dest_fmt)
 
     # Conditionally enable compression of snapshots.
     if CONF.libvirt_snapshot_compression and dest_fmt == "qcow2":

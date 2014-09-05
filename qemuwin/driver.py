@@ -623,9 +623,12 @@ class QemuWinDriver(driver.ComputeDriver):
         state_file_path = os.path.join(instances_path, 'host_state')
         try:
             with open(state_file_path, 'r') as state_file:
-                return json.load(state_file)
+                host_state_json = json.load(state_file)
+                if host_state_json is not None:
+                    return host_state_json
         except Exception:
-            return self._create_host_state_file()
+            pass
+        return self._create_host_state_file()
 
     def _create_host_state_file(self):
         instances_path = CONF.instances_path
