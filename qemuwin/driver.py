@@ -94,7 +94,6 @@ from nova.virt.qemuwin import imagebackend
 from nova.virt.qemuwin import imagecache
 from nova.virt.qemuwin import utils as libvirt_utils
 from nova.virt.qemuwin import images
-from nova.virt.qemuwin import metadataproxy
 from nova.virt import netutils
 from nova import volume
 from nova.volume import encryptors
@@ -244,6 +243,9 @@ SOCKET_NOT_BOUND = 10061
 QEMU_STARTUP_TIMEOUT = 5
 POWEROFF_RETRIES = 120
 POWEROFF_RETRY_INTERVAL = 1
+
+METADATAPROXY_RETRIES = 5
+METADATAPROXY_RETRIES_INTERVAL = 1
 
 QMP_REBOOT_COMMAND = 'system_reset'
 QMP_SUSPEND_COMMAND = 'stop'
@@ -421,7 +423,7 @@ class QemuWinDriver(driver.ComputeDriver):
         qemu_binary_string = 'qemu-system-%s.exe' % (arch)
         qemu_command = qemu_binary_string
         if CONF.qemu_home is not None:
-            qemu_command = os.path.join(CONF.qemu_home, qemu_binary_string)
+            qemu_command = '"%s"' % (os.path.join(CONF.qemu_home, qemu_binary_string))
         LOG.debug('QEMUWINDRIVER: qemu binary location: %s' % (qemu_command))
         return [qemu_command]
 
@@ -434,7 +436,7 @@ class QemuWinDriver(driver.ComputeDriver):
     def qemuCommandStr(cmd):
         return ' '.join(cmd)
 
-    def _create_qemu_machine(self, instance, metadata_port, qemu_arch='i386'):
+    def _create_qemu_machine(self, instance, metadata_port, metadata_pid, qemu_arch='i386'):
         instance_dir = libvirt_utils.get_instance_path(instance)
         xml_path = os.path.join(instance_dir, 'libvirt.xml')
         dom = minidom.parse(xml_path)
@@ -457,18 +459,20 @@ class QemuWinDriver(driver.ComputeDriver):
         devices = self.getEl(dom, 'devices')
         disk = self.getEl(devices, 'disk')
         diskSource = self.getEl(disk, 'source')
-        self.qemuCommandAddArg(cmd, '-drive', 'file=%s,id=drive-virtio-disk0,if=none' % diskSource.attributes['file'].value)
+        self.qemuCommandAddArg(cmd, '-drive', '"file=%s,id=drive-virtio-disk0,if=none"' % diskSource.attributes['file'].value)
         self.qemuCommandAddArg(cmd, '-device', 'virtio-blk-pci,bus=pci.0,addr=0x4,drive=drive-virtio-disk0,id=virtio-disk0,bootindex=1')
 
         serial = self.getEl(devices, 'serial')
         serialSource = self.getEl(serial, 'source')
-        self.qemuCommandAddArg(cmd, '-chardev', 'file,id=charserial0,path=%s' % serialSource.attributes['path'].value)
+        self.qemuCommandAddArg(cmd, '-chardev', '"file,id=charserial0,path=%s"' % serialSource.attributes['path'].value)
         self.qemuCommandAddArg(cmd, '-device', 'isa-serial,chardev=charserial0,id=serial0')
 
         interface = self.getEl(devices, 'interface')
         mac = self.getEl(interface, 'mac')
-        self.qemuCommandAddArg(cmd, '-netdev', ('"user,id=hostnet0,net=169.254.169.0/24,' \
-                                                'guestfwd=tcp:169.254.169.254:80-tcp:127.0.0.1:%s"' % metadata_port))
+        metadata_fwd = ''
+        if metadata_pid is not None:
+            metadata_fwd = ',guestfwd=tcp:169.254.169.254:80-tcp:127.0.0.1:%s' % metadata_port
+        self.qemuCommandAddArg(cmd, '-netdev', ('"user,id=hostnet0,net=169.254.169.0/24%s"' % metadata_fwd))
         self.qemuCommandAddArg(cmd, '-device', ('virtio-net-pci,netdev=hostnet0,id=net0,' \
                                                 'mac=%s,bus=pci.0,addr=0x3' % mac.attributes['address'].value))
 
@@ -485,9 +489,12 @@ class QemuWinDriver(driver.ComputeDriver):
 
         graphics = self.getEl(devices, 'graphics')
         display, vnc_port = self._next_vnc_display()
+        keymaps = graphics.attributes['keymap'].value
+        if CONF.qemu_home is not None:
+            keymaps = '"%s"' % (os.path.join(CONF.qemu_home, 'keymaps', graphics.attributes['keymap'].value))
 
         self.qemuCommandAddArg(cmd, '-vnc', '%s:%s' % (graphics.attributes['listen'].value, display))
-        self.qemuCommandAddArg(cmd, '-k', graphics.attributes['keymap'].value)
+        self.qemuCommandAddArg(cmd, '-k', keymaps)
         self.qemuCommandAddArg(cmd, '-vga', 'cirrus')
 
         self.qemuCommandAddArg(cmd, '-device', 'virtio-balloon-pci,id=balloon0,bus=pci.0,addr=0x5')
@@ -499,14 +506,31 @@ class QemuWinDriver(driver.ComputeDriver):
 
         return (self.qemuCommandStr(cmd), vnc_port, qmp_port)
 
-    def _start_metadata_proxy(self, instance_id, tenant_id):
+    def _start_metadata_proxy(self, instance, tenant_id):
+        instance_id = instance['uuid']
+        instance_dir = libvirt_utils.get_instance_path(instance)
         metadata_port = self._get_ephemeral_port()
-        parent_conn, child_conn = multiprocessing.Pipe()
-        metadata_process = multiprocessing.Process(target=metadataproxy.run_proxy_deamon, 
-                                args=(child_conn, instance_id, tenant_id, CONF.nova_metadata_port, CONF.nova_metadata_host, 
-                                      CONF.nova_metadata_shared_secret, metadata_port,))
-        metadata_process.start()
-        metadata_pid = parent_conn.recv()
+        current_path = os.path.dirname(__file__)
+        python_path = 'python.exe'
+        if CONF.python_home is not None:
+            python_path = os.path.join(CONF.python_home, 'python.exe')
+        proxy_cmd = ('"%s" "%s\metadataproxy.py" --instance_dir "%s" --instance_id %s --tenant_id %s --metadata_server %s '
+                     '--metadata_port %s --metadata_secret "%s" --port %s' % (python_path, current_path, instance_dir, 
+                                                                              instance_id, tenant_id, CONF.nova_metadata_host, 
+                                                                              CONF.nova_metadata_port, CONF.nova_metadata_shared_secret, 
+                                                                              metadata_port))
+        LOG.debug('metadataproxy: %s' % proxy_cmd)
+        metadata_process = subprocess.Popen(proxy_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        metadata_pid = None
+        metadataproxy_remaining = METADATAPROXY_RETRIES
+        while metadataproxy_remaining > 0:
+            metadataproxy_remaining -= 1
+            try:
+                with open(os.path.join(instance_dir, 'metadataproxy.pid'), 'r') as pidfile:
+                    metadata_pid = pidfile.read()
+                    break
+            except:
+                time.sleep(METADATAPROXY_RETRIES_INTERVAL)
         return metadata_port, metadata_pid
 
     def _create_instance_metadata_file(self, instance, metadata):
@@ -527,8 +551,8 @@ class QemuWinDriver(driver.ComputeDriver):
 
     def start_qemu_instance(self, instance):
 
-        def _start_qemu_process(instance, metadata_port, qemu_arch):
-            cmdline, vnc_port, qmp_port = self._create_qemu_machine(instance, metadata_port, qemu_arch)
+        def _start_qemu_process(instance, metadata_port, metadata_pid, qemu_arch):
+            cmdline, vnc_port, qmp_port = self._create_qemu_machine(instance, metadata_port, metadata_pid, qemu_arch)
             qemu_process = subprocess.Popen(cmdline)
             metadata = {'pid': qemu_process.pid, 'vnc_port': vnc_port, 'qmp_port': qmp_port, 'qemu_arch': qemu_arch, 
                         'metadata_pid': metadata_pid, 'metadata_port': metadata_port, 'iscsi_devices': {}, 
@@ -542,13 +566,13 @@ class QemuWinDriver(driver.ComputeDriver):
             ctypes.windll.kernel32.CloseHandle(handle)
             time.sleep(5)
 
-        metadata_port, metadata_pid = self._start_metadata_proxy(instance['uuid'], instance['project_id'])
+        metadata_port, metadata_pid = self._start_metadata_proxy(instance, instance['project_id'])
         qemu_arch = 'i386'
-        cmdline, qemu_pid = _start_qemu_process(instance, metadata_port, qemu_arch)
+        cmdline, qemu_pid = _start_qemu_process(instance, metadata_port, metadata_pid, qemu_arch)
         if not self._check_machine_started(instance):
             _kill(qemu_pid)
             qemu_arch = 'x86_64'
-            cmdline, qemu_pid = _start_qemu_process(instance, metadata_port, qemu_arch)
+            cmdline, qemu_pid = _start_qemu_process(instance, metadata_port, metadata_pid, qemu_arch)
         LOG.debug('Cmdline: %s' % (cmdline))
 
     def _next_vnc_display(self):
