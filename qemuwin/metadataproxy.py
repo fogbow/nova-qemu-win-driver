@@ -98,5 +98,4 @@ if __name__ == '__main__':
                                                args=(cmd_options.instance_dir, cmd_options.instance_id, cmd_options.tenant_id, 
                                                      cmd_options.metadata_port, cmd_options.metadata_server, 
                                                      cmd_options.metadata_secret, cmd_options.port,))
-    metadata_process.daemon = True
     metadata_process.start()
