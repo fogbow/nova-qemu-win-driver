@@ -560,17 +560,11 @@ class QemuWinDriver(driver.ComputeDriver):
             self._create_instance_metadata_file(instance, metadata)
             return (cmdline, qemu_process.pid)
 
-        def _kill(pid):
-            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
-            ctypes.windll.kernel32.TerminateProcess(handle, -1)
-            ctypes.windll.kernel32.CloseHandle(handle)
-            time.sleep(5)
-
         metadata_port, metadata_pid = self._start_metadata_proxy(instance, instance['project_id'])
         qemu_arch = 'i386'
         cmdline, qemu_pid = _start_qemu_process(instance, metadata_port, metadata_pid, qemu_arch)
         if not self._check_machine_started(instance):
-            _kill(qemu_pid)
+            self._kill(qemu_pid)
             qemu_arch = 'x86_64'
             cmdline, qemu_pid = _start_qemu_process(instance, metadata_port, metadata_pid, qemu_arch)
         LOG.debug('Cmdline: %s' % (cmdline))
@@ -1552,20 +1546,21 @@ class QemuWinDriver(driver.ComputeDriver):
                 return json.load(metadata_file)
         except Exception:
             return None
+            
+    def _kill(self, pid):
+        try:
+            subprocess.call(['taskkill', '/F', '/T', '/PID', str(pid)])
+            time.sleep(5)
+        except:
+            pass
     
     def destroy(self, instance, network_info, block_device_info=None,
                 destroy_disks=True, context=None):
 
-        def _kill(pid):
-            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
-            ctypes.windll.kernel32.TerminateProcess(handle, -1)
-            ctypes.windll.kernel32.CloseHandle(handle)
-            time.sleep(5)
-
         metadata = self._get_instance_metadata(instance)
         if (metadata is not None):
-            _kill(metadata['pid'])
-            _kill(metadata['metadata_pid'])
+            self._kill(metadata['pid'])
+            self._kill(metadata['metadata_pid'])
         shutil.rmtree(libvirt_utils.get_instance_path(instance), True)
 
     def _execute_iscsi_command(self, cmd, arguments=False):
