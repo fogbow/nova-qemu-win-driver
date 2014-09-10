@@ -1398,24 +1398,57 @@ class QemuWinDriver(driver.ComputeDriver):
             pass
         return None
 
+    def _recv_qmp_output(self, the_socket,timeout=2):
+        #make socket non blocking
+        the_socket.setblocking(0)
+     
+        #total data partwise in an array
+        total_data=[];
+        data='';
+     
+        #beginning time
+        begin=time.time()
+        while 1:
+            #if you got some data, then break after timeout
+            if total_data and time.time()-begin > timeout:
+                break
+         
+            #if you got no data at all, wait a little longer, twice the timeout
+            elif time.time()-begin > timeout*2:
+                break
+         
+            #recv something
+            try:
+                data = the_socket.recv(8192)
+                if data:
+                    total_data.append(data)
+                    #change the beginning time for measurement
+                    begin=time.time()
+                else:
+                    #sleep for sometime to indicate a gap
+                    time.sleep(0.1)
+            except:
+                pass
+     
+        #join all parts to make final string
+        return ''.join(total_data)
+
     def _run_qmp_command(self, instance, command, arguments=None, suppressOutput=False):
         LOG.debug('QEMUWINDRIVER: Running QMP command %s on instance %s' % (command, instance['name']))
         s = self._get_qmp_connection(instance)
         if s is not None:
             s.sendall('{"execute": "qmp_capabilities"}')
             time.sleep(QMP_CAPABILITY_WAIT)
-            capabilitiesOuput = s.recv(1024)
+            capabilitiesOuput = self._recv_qmp_output(s)
             if arguments is not None:
                 qmp_command = '{"execute": "%s", "arguments": %s}' % (command, arguments)
-                LOG.debug('QEMUWINDRIVER: running qmp command %s' % (qmp_command))
-                s.sendall(qmp_command)
             else:
                 qmp_command = '{"execute": "%s"}' % (command)
-                LOG.debug('QEMUWINDRIVER: running qmp command %s' % (qmp_command))
-                s.sendall(qmp_command)
+            LOG.debug('QEMUWINDRIVER: running qmp command %s' % (qmp_command))
+            s.sendall(qmp_command)
             commandOuput = None
             if not suppressOutput:
-                commandOuput = s.recv(1024)
+                commandOuput = self._recv_qmp_output(s)
                 LOG.debug('QEMUWINDRIVER: QMP command output: %s' % (commandOuput))
             s.close()
             return commandOuput
