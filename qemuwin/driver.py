@@ -40,10 +40,10 @@ import uuid
 import subprocess
 import json
 import ctypes
-import socket
 import platform
 import wmi
 import multiprocessing
+import traceback
 
 from eventlet import greenio
 from eventlet import greenthread
@@ -247,6 +247,10 @@ POWEROFF_RETRY_INTERVAL = 1
 METADATAPROXY_RETRIES = 5
 METADATAPROXY_RETRIES_INTERVAL = 1
 
+QEMU_SPAWN_MAX_RETRIES = 15
+QEMU_SPAWN_RETRY_INTERVAL = 2
+QEMU_SPAWN_GRACE_INTERVAL = 15
+
 QMP_REBOOT_COMMAND = 'system_reset'
 QMP_SUSPEND_COMMAND = 'stop'
 QMP_RESUME_COMMAND = 'cont'
@@ -266,6 +270,8 @@ ISCSI_LIST_SESSIONS_CMD = 'SessionList'
 ISCSI_TARGET_MAPPINGS_CMD = 'reporttargetmappings'
 ISCSI_ADD_TARGET_PORTAL_CMD = 'QAddTargetPortal'
 ISCSI_COMMAND_END_MESSAGE = 'The operation completed successfully.'
+
+taken_ports = []
 
 LOG = logging.getLogger(__name__)
 
@@ -307,9 +313,13 @@ class QemuWinDriver(driver.ComputeDriver):
         LOG.info("QEMUWINDRIVER: qemu home: %s" % (CONF.qemu_home))
         self._caps = None
         self._disk_cachemode = None
+        self._port_lock = threading.Lock()
         
         self.image_backend = imagebackend.Backend(CONF.use_cow_images)
         self.disk_cachemodes = {}
+        self._sockets = {}
+        self._socket_locks = {}
+        self._master_socket_lock = threading.Lock()
 
         self.valid_cachemodes = ["default",
                                  "none",
@@ -502,7 +512,7 @@ class QemuWinDriver(driver.ComputeDriver):
         self.qemuCommandAddArg(cmd, '-no-shutdown', '')
 
         qmp_port = self._get_ephemeral_port()
-        self.qemuCommandAddArg(cmd, '-qmp', 'tcp:127.0.0.1:%s,server,nowait,nodelay' % (qmp_port))
+        self.qemuCommandAddArg(cmd, '-qmp', 'tcp:127.0.0.1:%s,server,nowait' % (qmp_port))
 
         return (self.qemuCommandStr(cmd), vnc_port, qmp_port)
 
@@ -524,13 +534,20 @@ class QemuWinDriver(driver.ComputeDriver):
         metadata_pid = None
         metadataproxy_remaining = METADATAPROXY_RETRIES
         while metadataproxy_remaining > 0:
+            LOG.debug('QEMUWINDRIVER: trying to get metadataproxy pid, remaining %s tries' % metadataproxy_remaining)
             metadataproxy_remaining -= 1
             try:
                 with open(os.path.join(instance_dir, 'metadataproxy.pid'), 'r') as pidfile:
+                    LOG.debug('QEMUWINDRIVER: opened metadataproxy pid file')
                     metadata_pid = pidfile.read()
-                    break
+                    LOG.debug('QEMUWINDRIVER: metadataproxy pid file value %s' % metadata_pid)
+                    if metadata_pid != '' and metadata_pid != 'null':
+                        break
+                    else:
+                        time.sleep(METADATAPROXY_RETRIES_INTERVAL)
             except:
                 time.sleep(METADATAPROXY_RETRIES_INTERVAL)
+        LOG.debug('QEMUWINDRIVER: metadata_pid retrieved as %s' % metadata_pid)
         return metadata_port, metadata_pid
 
     def _create_instance_metadata_file(self, instance, metadata):
@@ -558,6 +575,7 @@ class QemuWinDriver(driver.ComputeDriver):
                         'metadata_pid': metadata_pid, 'metadata_port': metadata_port, 'iscsi_devices': {}, 
                         'machine_start_time': int(round(time.time()))}
             self._create_instance_metadata_file(instance, metadata)
+            LOG.debug('QEMUWINDRIVER: metadata for instance %s: %s' % (instance['name'], metadata))
             return (cmdline, qemu_process.pid)
 
         metadata_port, metadata_pid = self._start_metadata_proxy(instance, instance['project_id'])
@@ -596,7 +614,24 @@ class QemuWinDriver(driver.ComputeDriver):
                           block_device_info=block_device_info,
                           write_to_disk=True)
 
+        self._socket_locks[instance['uuid']] = threading.Lock()
         self.start_qemu_instance(instance)
+        self._wait_for_qmp(instance)
+
+    def _wait_for_qmp(self, instance):
+        check_running_remaining = QEMU_SPAWN_MAX_RETRIES
+        while check_running_remaining > 0:
+            check_running_remaining -= 1
+            try:
+                LOG.debug('QEMUWINDRIVER: will get state for %s' % (instance['name']))
+                instance_power_state = self._get_power_state(instance)
+                LOG.debug('QEMUWINDRIVER: instance name %s power state %s' % (instance['name'], instance_power_state))
+                if instance_power_state == power_state.RUNNING:
+                    return
+            except:
+                pass
+            time.sleep(QEMU_SPAWN_RETRY_INTERVAL)
+        raise Exception('Error when trying to spawn QEMU instance')
     
     @staticmethod
     def _get_console_log_path(instance):
@@ -1363,42 +1398,58 @@ class QemuWinDriver(driver.ComputeDriver):
             raise exception.InstanceNotRunning(instance_id=instance['uuid'])
         update_task_state(task_state=task_states.IMAGE_UPLOADING)
 
-    @staticmethod
-    def _get_ephemeral_port():
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            result = sock.bind(('127.0.0.1', 0))
-            port = sock.getsockname()[1]
-            sock.close()
-            return port
-        except Exception:
-            return None
+    def _get_ephemeral_port(self):
+        return self._get_available_port(5001, 5000)
 
-    @staticmethod
-    def _get_available_port(initial_port, max_tries):
-        for port in xrange(initial_port, initial_port + max_tries):
-            try:
+    def _get_available_port(self, initial_port, max_tries):
+        self._port_lock.acquire()
+        try:
+            for port in xrange(initial_port, initial_port + max_tries):
+                if port in taken_ports:
+                    continue
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                result = sock.connect_ex(('127.0.0.1', port))
-                sock.close()
-                if result == SOCKET_NOT_BOUND:
-                    return port
-            except Exception:
-                pass
-        return None
+                try:
+                    result = sock.connect_ex(('127.0.0.1', port))
+                    if result == SOCKET_NOT_BOUND:
+                        taken_ports.append(port)
+                        return port
+                except Exception:
+                    pass
+                finally:
+                    sock.close()
+
+            return None
+        finally:
+            self._port_lock.release()
 
     def _get_qmp_connection(self, instance):
-        try:
-            metadata = self._get_instance_metadata(instance)
-            if (metadata is not None):
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.connect(('127.0.0.1', metadata['qmp_port']))
-                return s
-        except Exception, e:
-            pass
-        return None
+        s = None
+        if (instance['uuid'] in self._sockets):
+            s = self._sockets[instance['uuid']]
+        else :
+            try:
+                metadata = self._get_instance_metadata(instance)
+                if (metadata is not None):
+                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    s.connect(('127.0.0.1', metadata['qmp_port']))
+                    self._negotiate_qmp_caps(s)
+                    self._sockets[instance['uuid']] = s
+            except Exception, e:
+                traceback.print_exc()
+                if s is not None:
+                    s.close()
+                    s = None
+        return s
 
-    def _recv_qmp_output(self, the_socket,timeout=2):
+    def _read_qmp_output(self, output):
+        output_lines = output.split('\n')
+        for line in output_lines:
+            clean_line = line.strip()
+            if 'event' not in clean_line and 'return' in clean_line:
+                return clean_line
+        return output
+
+    def _recv_qmp_output(self, the_socket,timeout=10):
         #make socket non blocking
         the_socket.setblocking(0)
      
@@ -1433,35 +1484,52 @@ class QemuWinDriver(driver.ComputeDriver):
         #join all parts to make final string
         return ''.join(total_data)
 
+    def _negotiate_qmp_caps(self, socket):
+        socket.sendall('{"execute": "qmp_capabilities"}')
+        time.sleep(QMP_CAPABILITY_WAIT)
+        self._recv_qmp_output(socket)
+
+    def _get_socket_lock(self, instance):
+        self._master_socket_lock.acquire()
+        if instance['uuid'] not in self._socket_locks:
+            self._socket_locks[instance['uuid']] = threading.Lock()
+        self._master_socket_lock.release()
+        return self._socket_locks[instance['uuid']]
+
     def _run_qmp_command(self, instance, command, arguments=None, suppressOutput=False):
-        LOG.debug('QEMUWINDRIVER: Running QMP command %s on instance %s' % (command, instance['name']))
-        s = self._get_qmp_connection(instance)
-        if s is not None:
-            s.sendall('{"execute": "qmp_capabilities"}')
-            time.sleep(QMP_CAPABILITY_WAIT)
-            capabilitiesOuput = self._recv_qmp_output(s)
-            if arguments is not None:
-                qmp_command = '{"execute": "%s", "arguments": %s}' % (command, arguments)
+        socket_lock = self._get_socket_lock(instance)
+        socket_lock.acquire()
+        try:
+            LOG.debug('QEMUWINDRIVER: Running QMP command %s on instance %s' % (command, instance['name']))
+            s = self._get_qmp_connection(instance)
+            if s is not None:
+                try:
+                    if arguments is not None:
+                        qmp_command = '{"execute": "%s", "arguments": %s}' % (command, arguments)
+                    else:
+                        qmp_command = '{"execute": "%s"}' % (command)
+                    LOG.debug('QEMUWINDRIVER: running qmp command %s' % (qmp_command))
+                    s.sendall(qmp_command)
+                    commandOuput = None
+                    if not suppressOutput:
+                        commandOuput = self._read_qmp_output(self._recv_qmp_output(s))
+                        LOG.debug('QEMUWINDRIVER: QMP command output: %s' % (commandOuput))
+                    return commandOuput
+                except:
+                    pass
             else:
-                qmp_command = '{"execute": "%s"}' % (command)
-            LOG.debug('QEMUWINDRIVER: running qmp command %s' % (qmp_command))
-            s.sendall(qmp_command)
-            commandOuput = None
-            if not suppressOutput:
-                commandOuput = self._recv_qmp_output(s)
-                LOG.debug('QEMUWINDRIVER: QMP command output: %s' % (commandOuput))
-            s.close()
-            return commandOuput
-        else:
-            LOG.debug('QEMUWINDRIVER: Could not run QMP command because socket failed')
-            return None
+                LOG.debug('QEMUWINDRIVER: Could not run QMP command because socket failed')
+                return None
+        finally:
+            socket_lock.release()
 
     def _get_qmp_instance_status(self, instance):
         json_string = self._run_qmp_command(instance, QMP_MACHINE_STATUS)
         is_running = False
         status = None
-        if json_string is not None:
-            machine_status = json.loads(json_string)            
+        if json_string is not None and json_string != "":
+            LOG.debug('QEMUWINDRIVER: getting qmp instance %s status: "%s"' % (instance['uuid'], json_string))
+            machine_status = json.loads(json_string)
             # returns two fields (running, status)
             # running is boolean, true if running or false if not
             # status is a string with values like running, paused, shutdown
@@ -1533,13 +1601,15 @@ class QemuWinDriver(driver.ComputeDriver):
             self._run_qmp_command(instance, QMP_STOP_COMMAND, suppressOutput=True)
             metadata = self._get_instance_metadata(instance)
             if metadata is not None:
+                self._release_ports(instance, metadata)
                 metadata['expected_state'] = 'shutdown'
                 self._create_instance_metadata_file(instance, metadata)
 
     def power_on(self, context, instance, network_info, block_device_info):
         metadata = self._get_instance_metadata(instance)
         if metadata is not None:
-            cmdline, vnc_port, qmp_port = self._create_qemu_machine(instance, metadata['metadata_port'], metadata['qemu_arch'])
+            cmdline, vnc_port, qmp_port = self._create_qemu_machine(instance, metadata['metadata_port'], 
+                                                                    metadata['metadata_pid'], metadata['qemu_arch'])
             qemu_process = subprocess.Popen(cmdline)
             metadata['pid'] = qemu_process.pid
             metadata['qmp_port'] = qmp_port
@@ -1548,6 +1618,7 @@ class QemuWinDriver(driver.ComputeDriver):
             if 'iscsi_devices' not in metadata:
                 metadata['iscsi_devices'] = {}
             self._create_instance_metadata_file(instance, metadata)
+            self._wait_for_qmp(instance)
 
     def soft_delete(self, instance):
         pass
@@ -1579,7 +1650,7 @@ class QemuWinDriver(driver.ComputeDriver):
                 return json.load(metadata_file)
         except Exception:
             return None
-            
+
     def _kill(self, pid):
         try:
             subprocess.call(['taskkill', '/F', '/T', '/PID', str(pid)])
@@ -1589,12 +1660,28 @@ class QemuWinDriver(driver.ComputeDriver):
     
     def destroy(self, instance, network_info, block_device_info=None,
                 destroy_disks=True, context=None):
-
         metadata = self._get_instance_metadata(instance)
         if (metadata is not None):
             self._kill(metadata['pid'])
             self._kill(metadata['metadata_pid'])
+            self._release_ports(instance, metadata)
         shutil.rmtree(libvirt_utils.get_instance_path(instance), True)
+
+    def _release_ports(self, instance, metadata):
+        self._port_lock.acquire()
+        try:
+            LOG.debug('QEMUWINDRIVER: releasing ports metadata %s, taken ports %s and sockets %s' % (metadata, taken_ports, self._sockets))
+            if metadata['qmp_port'] in taken_ports:
+                taken_ports.remove(metadata['qmp_port'])
+            if instance['uuid'] in self._sockets:
+                del self._sockets[instance['uuid']]
+            if instance['uuid'] in self._socket_locks:
+                del self._socket_locks[instance['uuid']]
+            taken_ports.remove(metadata['metadata_port'])
+            taken_ports.remove(metadata['vnc_port'])
+            LOG.debug('QEMUWINDRIVER: releasing ports metadata %s, taken ports %s and sockets %s' % (metadata, taken_ports, self._sockets))
+        finally:
+            self._port_lock.release()
 
     def _execute_iscsi_command(self, cmd, arguments=False):
         iscsi_cmd = '%s %s' % (ISCSI_CLI, cmd)
@@ -1830,11 +1917,13 @@ class QemuWinDriver(driver.ComputeDriver):
             json_result_cpus = json.loads(result_cpus)
             if 'return' in json_result_cpus:
                 num_cpu = len(json_result_cpus['return'])
-        return {'state': instance_power_state,
-                'max_mem': 0,
-                'mem': 0,
-                'num_cpu': num_cpu,
-                'cpu_time': cputime}
+        instance_info = {'state': instance_power_state,
+                         'max_mem': 0,
+                         'mem': 0,
+                         'num_cpu': num_cpu,
+                         'cpu_time': cputime}
+        LOG.debug('QEMUWINDRIVER: get_info values for instance %s: %s' % (instance['name'], instance_info))
+        return instance_info
 
     def _get_value(entry):
         values = entry.split("=")
