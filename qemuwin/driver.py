@@ -1679,8 +1679,10 @@ class QemuWinDriver(driver.ComputeDriver):
                 del self._sockets[instance['uuid']]
             if instance['uuid'] in self._socket_locks:
                 del self._socket_locks[instance['uuid']]
-            taken_ports.remove(metadata['metadata_port'])
-            taken_ports.remove(metadata['vnc_port'])
+            if 'metadata_port' in metadata and metadata['metadata_port'] in taken_ports:
+                taken_ports.remove(metadata['metadata_port'])
+            if 'vnc_port' in metadata and metadata['vnc_port'] in taken_ports:
+                taken_ports.remove(metadata['vnc_port'])
             LOG.debug('QEMUWINDRIVER: releasing ports metadata %s, taken ports %s and sockets %s' % (metadata, taken_ports, self._sockets))
         finally:
             self._port_lock.release()
