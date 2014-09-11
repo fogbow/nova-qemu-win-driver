@@ -1430,6 +1430,8 @@ class QemuWinDriver(driver.ComputeDriver):
             try:
                 metadata = self._get_instance_metadata(instance)
                 if (metadata is not None):
+                    if 'expected_state' in metadata and metadata['expected_state'] == 'shutdown':
+                        return None
                     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     s.connect(('127.0.0.1', metadata['qmp_port']))
                     self._negotiate_qmp_caps(s)
