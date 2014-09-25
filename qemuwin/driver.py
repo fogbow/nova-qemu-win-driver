@@ -2116,7 +2116,7 @@ class QemuWinDriver(driver.ComputeDriver):
         return
 
     def check_can_live_migrate_destination_cleanup(self, ctxt,
-                                                   dest_check_data):
+                                                   destroy_check_data):
         return
 
     def check_can_live_migrate_destination(self, ctxt, instance_ref,

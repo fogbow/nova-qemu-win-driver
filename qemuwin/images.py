@@ -48,8 +48,6 @@ image_opts = [
 CONF = cfg.CONF
 CONF.register_opts(image_opts)
 
-QEMU_IMG = os.path.join(CONF.qemu_home, 'qemu-img')
-
 class QemuImgInfo(object):
     BACKING_FILE_RE = re.compile((r"^(.*?)\s*\(actual\s+path\s*:"
                                   r"\s+(.*?)\)\s*$"), re.I)
@@ -79,6 +77,9 @@ class QemuImgInfo(object):
         if self.snapshots:
             lines.append("snapshots: %s" % self.snapshots)
         return "\n".join(lines)
+
+    def get_qemu_img_path(self):
+      return os.path.join(CONF.qemu_home, 'qemu-img')
 
     def _canonicalize(self, field):
         # Standardize on underscores/lc/no dash and no spaces
@@ -172,13 +173,13 @@ def qemu_img_info(path):
     if not os.path.exists(path) and CONF.libvirt_images_type != 'rbd':
         return QemuImgInfo()
 
-    out, err = utils.execute(QEMU_IMG, 'info', path)
+    out, err = utils.execute(get_qemu_img_path(), 'info', path)
     return QemuImgInfo(out)
 
 
 def convert_image(source, dest, out_format, run_as_root=False):
     """Convert image to other format."""
-    cmd = (QEMU_IMG, 'convert', '-O', out_format, source, dest)
+    cmd = (get_qemu_img_path(), 'convert', '-O', out_format, source, dest)
     utils.execute(*cmd, run_as_root=run_as_root)
 
 

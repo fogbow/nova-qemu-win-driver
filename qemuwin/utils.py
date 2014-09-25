@@ -48,8 +48,8 @@ CONF.register_opts(libvirt_opts)
 CONF.import_opt('instances_path', 'nova.compute.manager')
 LOG = logging.getLogger(__name__)
 
-QEMU_IMG = os.path.join(CONF.qemu_home, 'qemu-img')
-
+def get_qemu_img_path(self):
+        return os.path.join(CONF.qemu_home, 'qemu-img')
 
 def execute(*args, **kwargs):
     return utils.execute(*args, **kwargs)
@@ -178,7 +178,7 @@ def create_image(disk_format, path, size):
                  M for Mebibytes, 'G' for Gibibytes, 'T' for Tebibytes).
                  If no suffix is given, it will be interpreted as bytes.
     """
-    execute(QEMU_IMG, 'create', '-f', disk_format, path, size)
+    execute(get_qemu_img_path(), 'create', '-f', disk_format, path, size)
 
 
 def create_cow_image(backing_file, path, size=None):
@@ -189,7 +189,7 @@ def create_cow_image(backing_file, path, size=None):
     :param backing_file: Existing image on which to base the COW image
     :param path: Desired location of the COW image
     """
-    base_cmd = [QEMU_IMG, 'create', '-f', 'qcow2']
+    base_cmd = [get_qemu_img_path(), 'create', '-f', 'qcow2']
     cow_opts = []
     if backing_file:
         cow_opts += ['backing_file=%s' % backing_file]
