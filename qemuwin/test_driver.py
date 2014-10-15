@@ -5,15 +5,19 @@ import random
 import os
 import time
 import shutil
+import sys
 
-INSTANCE_TEST_PATH = 'C:\unittest'
+reload(sys)
+sys.setdefaultencoding("UTF8")
+
+INSTANCE_TEST_PATH = 'C:\\iunittest\\'
 instance_tracker = [];
 class QemuWinDriverTestCase(unittest.TestCase):
 
 
 
-
-
+  maxDiff = None
+   
   @mock.patch('driver.CONF')
   @mock.patch('driver.QemuWinDriver.__init__',mock.Mock(return_value=None))
   def test_list_instance(self, mock_conf):
@@ -129,6 +133,8 @@ class QemuWinDriverTestCase(unittest.TestCase):
     mock_minidom.getElementsByTagName.return_value = [fakevalue]
     element = qemuwindriver.getEl(mock_minidom, elName)
     self.assertEqual(element, fakevalue)
+    mock_minidom.getElementsByTagName.return_value = []
+    self.assertRaises(IndexError, qemuwindriver.getEl, mock_minidom, elName)
 
   
   @mock.patch('driver.CONF')
@@ -141,6 +147,9 @@ class QemuWinDriverTestCase(unittest.TestCase):
     mock_minidom.getElementsByTagName.return_value = [fakevalue]
     element = qemuwindriver.getEls(mock_minidom, elName)
     self.assertEqual(element, [fakevalue])
+    mock_minidom.getElementsByTagName.return_value = []
+    element = qemuwindriver.getEls(mock_minidom, elName)
+    self.assertEqual(element, [])
 
   @mock.patch('driver.CONF')
   @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value=None))
@@ -180,6 +189,81 @@ class QemuWinDriverTestCase(unittest.TestCase):
     command_str = qemuwindriver.qemuCommandStr(command)
     command_str_expected = 'fakecommand'
     self.assertEqual(command_str, command_str_expected)
+
+  @mock.patch('driver.CONF', mock.Mock(qemu_home = INSTANCE_TEST_PATH))
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value=None))
+  @mock.patch('driver.QemuWinDriver.getText', mock.Mock(side_effect= ['fakearch', '1024', 'fakename', 'fakeuuid', 'fakevcpu']))
+  @mock.patch('driver.QemuWinDriver.getEl', mock.Mock(side_effect=  ['fakecpu', ['fakedevice1', 'fakedevice2'], 'fakedisk' , mock.Mock(attributes = {"file":mock.Mock(value='fakefile')}),
+                            'fakeserial', mock.Mock(attributes = {"path":mock.Mock( value='fakepath')}), 'fakeinterface', mock.Mock(attributes = {"address":mock.Mock(value='fakeaddress')}),
+                            mock.Mock(attributes= {"type":mock.Mock(value = 'faketype')}), 'fakesystem', mock.Mock(attributes = {'keymap': mock.Mock(value = 'fakekeymap'), 'listen': mock.Mock(value = 'fakelisten')})]))
+  @mock.patch('driver.QemuWinDriver.getEls',mock.Mock(side_effect=[[mock.Mock(attributes = {"name":mock.Mock(value = 'fakename')}, childNodes = [mock.Mock(nodeValue='fakevalue')])]]))
+  @mock.patch('driver.QemuWinDriver._get_instance_path', mock.Mock(return_value=INSTANCE_TEST_PATH))
+  @mock.patch('driver.minidom')
+  @mock.patch('driver.QemuWinDriver._next_vnc_display', mock.Mock(return_value=('fakedisplay', 'fakeport')))
+  @mock.patch('driver.QemuWinDriver._get_ephemeral_port', mock.Mock(return_value= 'fakeephemeralport'))  
+  @mock.patch('driver.QemuWinDriver.qemuCommandNew', mock.Mock(return_value=['%s%s'  % (INSTANCE_TEST_PATH, 'qemu-system-i386')]))
+  def test_create_qemu_machine(self, mock_minidom):
+    qemuwindriver = QemuWinDriver()
+    diskSource = mock.Mock(attributes ={"file":'fakefile'})
+    mock_minidom.parse.return_value = mock.Mock()
+    seriaSource = mock.Mock(attributes = {"path":'fakepath'})
+    mac = mock.Mock(attributes = {'address':'fakeaddress'})
+    sysinfo = mock.Mock(attributes= {'type':'faketype'} )
+    graphics = mock.Mock(attributes ={'keymap':'fakekeymap', 'type':'fakegraphictype', 'listen':'fakelistenvalue'})
+    metadata_port = 'fakeport'
+    metadata_pid = 'fakepid'
+    instance = "fakeinstance"
+#    expected_command = 'C:\iunittest\qemu-system-i386 -m 1 -smp 1,sockets=1,cores=1,threads=1'  \
+#                       ' -name fakename -uuid fakeuuid -drive "file=fakefile,id=drive-virtio-disk0,if=none"' \
+#                       ' -device virtio-blk-pci,bus=pci.0,addr=0x4,drive=drive-virtio-disk0,id=virtio-disk0,bootindex=1' \
+#                       ' -chardev "file,id=charserial0,path=fakepath" -device isa-serial,chardev=charserial0,id=serial0' \
+#                       ' -netdev "user,id=hostnet0,net=169.254.169.0/24,guestfwd=tcp:169.254.169.254:80-tcp:127.0.0.1:fakeport"' \
+#                       ' -device virtio-net-pci,netdev=hostnet0,id=net0,mac=fakeaddress,bus=pci.0,addr=0x3' \
+#                       ' -faketype type=1,fakename=fakevalue -usb  -vnc fakelisten:fakedisplay -k "C:\iunittest\keymaps\fakekeymap" -vga cirrus -device' \
+#                       ' virtio-balloon-pci,id=balloon0,bus=pci.0,addr=0x5 -rtc base=utc,driftfix=slew' \
+#                       ' -no-shutdown  -qmp tcp:127.0.0.1:fakeephemeralport,server,nowait '
+    mount_command = ['%s%s' % (INSTANCE_TEST_PATH, 'qemu-system-i386')]
+    mount_command.append('-m')
+    mount_command.append('1')
+    mount_command.append('-smp')
+    mount_command.append('1,sockets=1,cores=1,threads=1')
+    mount_command.append('-name')
+    mount_command.append('fakename')
+    mount_command.append('-uuid')
+    mount_command.append('fakeuuid')
+    mount_command.append('-drive')
+    mount_command.append('"file=fakefile,id=drive-virtio-disk0,if=none"')
+    mount_command.append('-device')
+    mount_command.append('virtio-blk-pci,bus=pci.0,addr=0x4,drive=drive-virtio-disk0,id=virtio-disk0,bootindex=1')
+    mount_command.append('-chardev')
+    mount_command.append('"file,id=charserial0,path=fakepath"')
+    mount_command.append('-device')
+    mount_command.append('isa-serial,chardev=charserial0,id=serial0')
+    mount_command.append('-netdev')
+    mount_command.append('"user,id=hostnet0,net=169.254.169.0/24,guestfwd=tcp:169.254.169.254:80-tcp:127.0.0.1:fakeport"')
+    mount_command.append('-device')
+    mount_command.append('virtio-net-pci,netdev=hostnet0,id=net0,mac=fakeaddress,bus=pci.0,addr=0x3')
+    mount_command.append('-faketype')
+    mount_command.append('type=1,fakename=fakevalue -usb')
+    mount_command.append('')
+    mount_command.append('-vnc')
+    mount_command.append('fakelisten:fakedisplay')
+    mount_command.append('-k')
+    mount_command.append('"%skeymaps\%s"' % (INSTANCE_TEST_PATH, 'fakekeymap'))
+    mount_command.append('-vga')
+    mount_command.append('cirrus')
+    mount_command.append('-device')
+    mount_command.append('virtio-balloon-pci,id=balloon0,bus=pci.0,addr=0x5')
+    mount_command.append('-rtc')
+    mount_command.append('base=utc,driftfix=slew')
+    mount_command.append('-no-shutdown')
+    mount_command.append('')
+    mount_command.append('-qmp')
+    mount_command.append('tcp:127.0.0.1:fakeephemeralport,server,nowait')
+    mount_commandstring =  ' '.join(mount_command)
+    expected_command_tupple = (mount_commandstring, 'fakeport', 'fakeephemeralport')
+    command_tupple = qemuwindriver._create_qemu_machine(instance, metadata_port, metadata_pid)
+    self.assertEqual(expected_command_tupple, command_tupple)
 
 if __name__ == "__main__":
   unittest.main()

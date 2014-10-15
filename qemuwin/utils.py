@@ -48,7 +48,7 @@ CONF.register_opts(libvirt_opts)
 CONF.import_opt('instances_path', 'nova.compute.manager')
 LOG = logging.getLogger(__name__)
 
-def get_qemu_img_path(self):
+def get_qemu_img_path():
         return os.path.join(CONF.qemu_home, 'qemu-img')
 
 def execute(*args, **kwargs):

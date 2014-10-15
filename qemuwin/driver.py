@@ -98,6 +98,11 @@ from nova.virt import netutils
 from nova import volume
 from nova.volume import encryptors
 
+# Set default encoding to 'UTF-8' instead of 'ascii'
+# http://stackoverflow.com/questions/11741574/how-to-set-the-default-encoding-to-utf-8-in-python
+# Bad things might happen though
+reload(sys)
+sys.setdefaultencoding("UTF8")
 
 libvirt_opts = [
     cfg.StrOpt('rescue_image_id',
@@ -426,7 +431,7 @@ class QemuWinDriver(driver.ComputeDriver):
 
     @staticmethod
     def getText(dom, elName):
-        return dom.getElementsByTagName(elName)[0].childNodes[0].nodeValue
+         return dom.getElementsByTagName(elName)[0].childNodes[0].nodeValue
 
     @staticmethod
     def qemuCommandNew(arch):
@@ -446,8 +451,11 @@ class QemuWinDriver(driver.ComputeDriver):
     def qemuCommandStr(cmd):
         return ' '.join(cmd)
 
+    def _get_instance_path(instance):
+        return libvirt_utils.get_instance_path(instance)  
+
     def _create_qemu_machine(self, instance, metadata_port, metadata_pid, qemu_arch='i386'):
-        instance_dir = libvirt_utils.get_instance_path(instance)
+        instance_dir = self._get_instance_path(instance)
         xml_path = os.path.join(instance_dir, 'libvirt.xml')
         dom = minidom.parse(xml_path)
         cpu = self.getEl(dom, 'cpu')
@@ -515,10 +523,11 @@ class QemuWinDriver(driver.ComputeDriver):
         self.qemuCommandAddArg(cmd, '-qmp', 'tcp:127.0.0.1:%s,server,nowait' % (qmp_port))
 
         return (self.qemuCommandStr(cmd), vnc_port, qmp_port)
+ 
 
     def _start_metadata_proxy(self, instance, tenant_id):
         instance_id = instance['uuid']
-        instance_dir = libvirt_utils.get_instance_path(instance)
+        instance_dir = self._get_instance_path(instance)
         metadata_port = self._get_ephemeral_port()
         current_path = os.path.dirname(__file__)
         python_path = 'python.exe'
@@ -948,7 +957,7 @@ class QemuWinDriver(driver.ComputeDriver):
         inst_type = self.virtapi.instance_type_get(
             nova_context.get_admin_context(read_deleted='yes'),
             instance['instance_type_id'])
-        inst_path = libvirt_utils.get_instance_path(instance)
+        inst_path = libvirt_utils.get_instance_path(instance).replace("/", "//")
         disk_mapping = disk_info['mapping']
 
         CONSOLE = "console=tty0 console=ttyS0"
@@ -1430,8 +1439,6 @@ class QemuWinDriver(driver.ComputeDriver):
             try:
                 metadata = self._get_instance_metadata(instance)
                 if (metadata is not None):
-                    if 'expected_state' in metadata and metadata['expected_state'] == 'shutdown':
-                        return None
                     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     s.connect(('127.0.0.1', metadata['qmp_port']))
                     self._negotiate_qmp_caps(s)
@@ -1679,10 +1686,8 @@ class QemuWinDriver(driver.ComputeDriver):
                 del self._sockets[instance['uuid']]
             if instance['uuid'] in self._socket_locks:
                 del self._socket_locks[instance['uuid']]
-            if 'metadata_port' in metadata and metadata['metadata_port'] in taken_ports:
-                taken_ports.remove(metadata['metadata_port'])
-            if 'vnc_port' in metadata and metadata['vnc_port'] in taken_ports:
-                taken_ports.remove(metadata['vnc_port'])
+            taken_ports.remove(metadata['metadata_port'])
+            taken_ports.remove(metadata['vnc_port'])
             LOG.debug('QEMUWINDRIVER: releasing ports metadata %s, taken ports %s and sockets %s' % (metadata, taken_ports, self._sockets))
         finally:
             self._port_lock.release()

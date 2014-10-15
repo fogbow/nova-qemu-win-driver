@@ -48,6 +48,11 @@ image_opts = [
 CONF = cfg.CONF
 CONF.register_opts(image_opts)
 
+def get_qemu_img_path():
+      img_path = os.path.join(CONF.qemu_home, 'qemu-img')
+      LOG.debug("Qemu Image Path being set as:%s" % img_path)
+      return img_path
+
 class QemuImgInfo(object):
     BACKING_FILE_RE = re.compile((r"^(.*?)\s*\(actual\s+path\s*:"
                                   r"\s+(.*?)\)\s*$"), re.I)
@@ -77,9 +82,6 @@ class QemuImgInfo(object):
         if self.snapshots:
             lines.append("snapshots: %s" % self.snapshots)
         return "\n".join(lines)
-
-    def get_qemu_img_path(self):
-      return os.path.join(CONF.qemu_home, 'qemu-img')
 
     def _canonicalize(self, field):
         # Standardize on underscores/lc/no dash and no spaces
