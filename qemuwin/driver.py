@@ -561,11 +561,14 @@ class QemuWinDriver(driver.ComputeDriver):
         LOG.debug('QEMUWINDRIVER: metadata_pid retrieved as %s' % metadata_pid)
         return metadata_port, metadata_pid
 
+    def _dump_metadata(self, metadata, metadata_file):
+      json.dump(metadata, metadata_file)
+
     def _create_instance_metadata_file(self, instance, metadata):
-        instance_dir = libvirt_utils.get_instance_path(instance)
+        instance_dir = self._get_instance_path(instance)
         metadata_file_path = os.path.join(instance_dir, INSTANCE_METADATA_FILE)
         with open(metadata_file_path, "w") as metadata_file:
-            json.dump(metadata, metadata_file)
+            self._dump_metadata(metadata, metadata_file)
 
     def _check_machine_started(self, instance):
         time.sleep(QEMU_STARTUP_TIMEOUT)

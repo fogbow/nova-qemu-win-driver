@@ -264,7 +264,6 @@ class QemuWinDriverTestCase(unittest.TestCase):
     command_tupple = qemuwindriver._create_qemu_machine(instance, metadata_port, metadata_pid)
     self.assertEqual(expected_command_tupple, command_tupple)
 
-
   @mock.patch('driver.CONF')
   @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
   @mock.patch('driver.QemuWinDriver._get_instance_path', mock.Mock(return_value = INSTANCE_TEST_PATH))
@@ -305,6 +304,20 @@ class QemuWinDriverTestCase(unittest.TestCase):
     mock_conf.nova_metadata_shared_secret = 'fakemetadatasharedsecret'
     expected_return = 'fakeport' , ''
     method_return = qemuwindriver._start_metadata_proxy(instance, tenant_id)
+
+  
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.QemuWinDriver._get_instance_path', mock.Mock(return_value = '%s%s' % (INSTANCE_TEST_PATH, 'metadatafile')))
+  @mock.patch('driver.os.path.join', mock.Mock(return_value = 'fakemetadafile'))
+  @mock.patch('driver.open', mock.mock_open(), create = True)
+  @mock.patch('driver.QemuWinDriver._dump_metadata', mock.Mock())
+  def test_create_instance_metadata_file(self):
+    metadata = 'fakemetadata'
+    qemuwindriver = QemuWinDriver();
+    instance = 'instance'
+    qemuwindriver._create_instance_metadata_file(instance, metadata)
+
+    assert qemuwindriver._dump_metadata.called
 
 
 if __name__ == "__main__":
