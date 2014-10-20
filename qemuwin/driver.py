@@ -524,6 +524,8 @@ class QemuWinDriver(driver.ComputeDriver):
 
         return (self.qemuCommandStr(cmd), vnc_port, qmp_port)
  
+    def _create_subproccess(self, proxy_cmd):
+      return subprocess.Popen(proxy_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
     def _start_metadata_proxy(self, instance, tenant_id):
         instance_id = instance['uuid']
@@ -539,7 +541,7 @@ class QemuWinDriver(driver.ComputeDriver):
                                                                               CONF.nova_metadata_port, CONF.nova_metadata_shared_secret, 
                                                                               metadata_port))
         LOG.debug('metadataproxy: %s' % proxy_cmd)
-        metadata_process = subprocess.Popen(proxy_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        metadata_process = self._create_subproccess(proxy_cmd)
         metadata_pid = None
         metadataproxy_remaining = METADATAPROXY_RETRIES
         while metadataproxy_remaining > 0:

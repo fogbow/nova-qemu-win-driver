@@ -104,7 +104,6 @@ class QemuWinDriverTestCase(unittest.TestCase):
     self.assertEqual(cachemode, "writethrough")
 
     qemuwindriver._disk_cachemode = None
- #   mock_supp.return_value = True
     cachemode = qemuwindriver.disk_cachemode
     self.assertEqual(cachemode, 'none')
 
@@ -264,6 +263,49 @@ class QemuWinDriverTestCase(unittest.TestCase):
     expected_command_tupple = (mount_commandstring, 'fakeport', 'fakeephemeralport')
     command_tupple = qemuwindriver._create_qemu_machine(instance, metadata_port, metadata_pid)
     self.assertEqual(expected_command_tupple, command_tupple)
+
+
+  @mock.patch('driver.CONF')
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.QemuWinDriver._get_instance_path', mock.Mock(return_value = INSTANCE_TEST_PATH))
+  @mock.patch('driver.QemuWinDriver._get_ephemeral_port', mock.Mock(return_value = 'fakeport'))
+  @mock.patch('driver.os.path')
+  @mock.patch('driver.os.path.join', mock.Mock(side_effect= ['%s%s' % (INSTANCE_TEST_PATH, 'python.exe'),
+  '%s%s' % (INSTANCE_TEST_PATH, 'metadataproxy.pid' )]))
+  @mock.patch('driver.open', mock.mock_open(read_data = 'fakepid'), create = True)
+  @mock.patch('driver.QemuWinDriver._create_subproccess', mock.Mock(return_value = 'fakeprocces'))
+  def test_start_metadata_proxy(self, mock_conf, mock_path):
+    instance = {'uuid':'fakeuuid'}
+    tenant_id = 'faketenantid'
+    qemuwindriver = QemuWinDriver()
+    mock_path.dirname = INSTANCE_TEST_PATH
+    mock_conf.nova_metadata_host = 'fakemetadatahost'
+    mock_conf.nova_metadata_port = 'fakemetadataport'
+    mock_conf.nova_metadata_shared_secret = 'fakemetadatasharedsecret'
+    expected_return = 'fakeport' , 'fakepid'
+    method_return = qemuwindriver._start_metadata_proxy(instance, tenant_id)
+    self.assertEqual(expected_return, method_return)
+
+  @mock.patch('driver.CONF')
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.QemuWinDriver._get_instance_path', mock.Mock(return_value = INSTANCE_TEST_PATH))
+  @mock.patch('driver.QemuWinDriver._get_ephemeral_port', mock.Mock(return_value = 'fakeport'))
+  @mock.patch('driver.os.path')
+  @mock.patch('driver.os.path.join', mock.Mock(side_effect= ['%s%s' % (INSTANCE_TEST_PATH, 'python.exe'),
+  '%s%s' % (INSTANCE_TEST_PATH, 'metadataproxy.pid' )]))
+  @mock.patch('driver.open', mock.mock_open(read_data = ''), create = True)
+  @mock.patch('driver.QemuWinDriver._create_subproccess', mock.Mock(return_value = 'fakeprocces'))
+  def test_start_metadata_proxy_no_pid_information(self, mock_conf, mock_path):
+    instance = {'uuid':'fakeuuid'}
+    tenant_id = 'faketenantid'
+    qemuwindriver = QemuWinDriver()
+    mock_path.dirname = INSTANCE_TEST_PATH
+    mock_conf.nova_metadata_host = 'fakemetadatahost'
+    mock_conf.nova_metadata_port = 'fakemetadataport'
+    mock_conf.nova_metadata_shared_secret = 'fakemetadatasharedsecret'
+    expected_return = 'fakeport' , ''
+    method_return = qemuwindriver._start_metadata_proxy(instance, tenant_id)
+
 
 if __name__ == "__main__":
   unittest.main()
