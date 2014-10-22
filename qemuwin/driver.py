@@ -524,8 +524,8 @@ class QemuWinDriver(driver.ComputeDriver):
 
         return (self.qemuCommandStr(cmd), vnc_port, qmp_port)
  
-    def _create_subproccess(self, proxy_cmd):
-      return subprocess.Popen(proxy_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    def _create_subproccess(self, cmd):
+      return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
     def _start_metadata_proxy(self, instance, tenant_id):
         instance_id = instance['uuid']
@@ -584,7 +584,7 @@ class QemuWinDriver(driver.ComputeDriver):
 
         def _start_qemu_process(instance, metadata_port, metadata_pid, qemu_arch):
             cmdline, vnc_port, qmp_port = self._create_qemu_machine(instance, metadata_port, metadata_pid, qemu_arch)
-            qemu_process = subprocess.Popen(cmdline)
+            qemu_process = QemuWinDriver._create_subproccess(cmdline)
             metadata = {'pid': qemu_process.pid, 'vnc_port': vnc_port, 'qmp_port': qmp_port, 'qemu_arch': qemu_arch, 
                         'metadata_pid': metadata_pid, 'metadata_port': metadata_port, 'iscsi_devices': {}, 
                         'machine_start_time': int(round(time.time()))}
@@ -606,15 +606,18 @@ class QemuWinDriver(driver.ComputeDriver):
         display = port - VNC_BASE_PORT
         return (display, port)
 
+    def _get_disk_info(self, hypervisor, instance, block_device_info, image_meta):
+      return blockinfo.get_disk_info(hypervisor, instance, block_device_info, image_meta)
+
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info=None, block_device_info=None):
         LOG.info("qemuwin.QemuWinDriver creating %s." % instance['name'])
         LOG.info("Instance Data %s." % instance)
         state = power_state.RUNNING
-        disk_info = blockinfo.get_disk_info('qemu',
-                                            instance,
-                                            block_device_info,
-                                            image_meta)
+        disk_info = self._get_disk_info('qemu',
+                                   instance,
+                                   block_device_info,
+                                   image_meta)
         
         self._create_image(context, instance,
                            disk_info['mapping'],
