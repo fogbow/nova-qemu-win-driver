@@ -424,5 +424,57 @@ class QemuWinDriverTestCase(unittest.TestCase):
     qemuwindriver.QEMU_SPAWN_MAX_RETRIES = 1
     self.assertRaises(Exception, qemuwindriver._wait_for_qmp, instance)
 
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.QemuWinDriver._get_console_log_path', mock.Mock(return_value = INSTANCE_TEST_PATH))
+  @mock.patch('driver.os.path')
+  @mock.patch('driver.QemuWinDriver._chown', mock.Mock())
+  @mock.Mock('driver.os.getuid', returns = 'fakeuid')
+  def test_chown_console_log_for_instance_path_exists(self, mock_path, mock_os):
+    mock_os.getuid.return_value = 'fakeuid' 
+    mock_path.exists.return_value = True
+    instance = 'fakeinstance'
+    qemuwindriver = QemuWinDriver()
+    qemuwindriver._chown_console_log_for_instance(instance)
+    qemuwindriver._chown.assert_called_with(INSTANCE_TEST_PATH, 'fakeuid')
+
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.QemuWinDriver._get_console_log_path', mock.Mock(return_value = INSTANCE_TEST_PATH))
+  @mock.patch('driver.os.path')
+  @mock.patch('driver.QemuWinDriver._chown', mock.Mock())
+  @mock.Mock('driver.os.getuid', returns = 'fakeuid')
+  def test_chown_console_log_for_instance_path_not_exists(self, mock_path, mock_os):
+    mock_os.getuid.return_value = 'fakeuid' 
+    mock_path.exists.return_value = False
+    instance = 'fakeinstance'
+    qemuwindriver = QemuWinDriver()
+    qemuwindriver._chown_console_log_for_instance(instance)
+    assert not qemuwindriver._chown.called, 'method should not have been called'
+
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.QemuWinDriver._get_disk_config_path', mock.Mock(return_value = INSTANCE_TEST_PATH))
+  @mock.patch('driver.os.path')
+  @mock.patch('driver.QemuWinDriver._chown', mock.Mock())
+  @mock.Mock('driver.os.getuid', returns = 'fakeuid')
+  def test_chown_disk_config_for_instance_path_exists(self, mock_path, mock_os):
+    mock_os.getuid.return_value = 'fakeuid' 
+    mock_path.exists.return_value = True
+    instance = 'fakeinstance'
+    qemuwindriver = QemuWinDriver()
+    qemuwindriver._chown_disk_config_for_instance(instance)
+    qemuwindriver._chown.assert_called_with(INSTANCE_TEST_PATH, 'fakeuid')
+
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.QemuWinDriver._get_disk_config_path', mock.Mock(return_value = INSTANCE_TEST_PATH))
+  @mock.patch('driver.os.path')
+  @mock.patch('driver.QemuWinDriver._chown', mock.Mock())
+  @mock.Mock('driver.os.getuid', returns = 'fakeuid')
+  def test_chown_disk_config_for_instance_path_not_exists(self, mock_path, mock_os):
+    mock_os.getuid.return_value = 'fakeuid' 
+    mock_path.exists.return_value = False
+    instance = 'fakeinstance'
+    qemuwindriver = QemuWinDriver()
+    qemuwindriver._chown_disk_config_for_instance(instance)
+    assert not qemuwindriver._chown.called, 'method should not have been called'
+
 if __name__ == "__main__":
   unittest.main()
