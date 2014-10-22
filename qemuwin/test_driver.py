@@ -1,4 +1,5 @@
 from driver import QemuWinDriver
+from nova.compute import power_state
 import mock
 import unittest
 import random
@@ -404,6 +405,24 @@ class QemuWinDriverTestCase(unittest.TestCase):
     QemuWinDriver._get_disk_info.assert_called_with('qemu', instance, None, image_meta)
     QemuWinDriver._create_image.assert_called_with(context, instance, 'fakemapping', network_info =None,block_device_info = None,files = injectedfiles,admin_pass = adminpassword)
     QemuWinDriver.to_xml.assert_called_with(context, instance, None, {'mapping': 'fakemapping'}, image_meta, block_device_info = None, write_to_disk = True)
+
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.QemuWinDriver._get_power_state', mock.Mock(return_value = power_state.RUNNING))
+  @mock.patch('driver.time.sleep', mock.Mock())
+  def test_wait_for_qmp_running_on_first_try(self):
+    qemuwindriver = QemuWinDriver()
+    instance = {'name' : 'fakename'}
+    qemuwindriver.QEMU_SPAWN_MAX_RETRIES = 1
+    qemuwindriver._wait_for_qmp(instance)
+
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.QemuWinDriver._get_power_state', mock.Mock(return_value = None))
+  @mock.patch('driver.time.sleep', mock.Mock())
+  def test_wait_for_qmp_fails(self):
+    qemuwindriver = QemuWinDriver()
+    instance = {'name' : 'fakename'}
+    qemuwindriver.QEMU_SPAWN_MAX_RETRIES = 1
+    self.assertRaises(Exception, qemuwindriver._wait_for_qmp, instance)
 
 if __name__ == "__main__":
   unittest.main()

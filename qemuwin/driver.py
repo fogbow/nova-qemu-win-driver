@@ -652,23 +652,26 @@ class QemuWinDriver(driver.ComputeDriver):
     
     @staticmethod
     def _get_console_log_path(instance):
-        return os.path.join(libvirt_utils.get_instance_path(instance),
+        return os.path.join(self._get_instance_path(instance),
                             'console.log')
 
     @staticmethod
     def _get_disk_config_path(instance):
-        return os.path.join(libvirt_utils.get_instance_path(instance),
+        return os.path.join(self._get_instance_path(instance),
                             'disk.config')
     
+    def _chown(path, uid):
+      libvirt_utils.chown(path, uid)
+
     def _chown_console_log_for_instance(self, instance):
         console_log = self._get_console_log_path(instance)
         if os.path.exists(console_log):
-            libvirt_utils.chown(console_log, os.getuid())
+            self._chown(console_log, os.getuid())
 
     def _chown_disk_config_for_instance(self, instance):
         disk_config = self._get_disk_config_path(instance)
         if os.path.exists(disk_config):
-            libvirt_utils.chown(disk_config, os.getuid())
+            self._chown(disk_config, os.getuid())
       
     @staticmethod
     def _create_local(target, local_size, unit='G',
