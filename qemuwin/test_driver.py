@@ -94,6 +94,7 @@ class QemuWinDriverTestCase(unittest.TestCase):
   @mock.patch('driver.CONF')
   @mock.patch('driver.QemuWinDriver.__init__',mock.Mock(return_value=None))
   @mock.patch('driver.QemuWinDriver._supports_direct_io', mock.Mock(side_effect=[False, True]))
+  @mock.patch('driver.time.sleep', mock.Mock())
   def test_disk_cache_mode(self, mock_conf):
     qemuwindriver = QemuWinDriver()
     mock_conf.instances_path = None
@@ -115,6 +116,7 @@ class QemuWinDriverTestCase(unittest.TestCase):
   @mock.patch('driver.QemuWinDriver.__init__',mock.Mock(return_value=None))
   @mock.patch('driver.os')
   @mock.patch('driver.os.path')
+  @mock.patch('driver.time.sleep', mock.Mock())
   def test_supports_direct_io(self, mock_conf, mock_os, mock_path):
     dirpath = INSTANCE_TEST_PATH
     mock_os.open.return_value = None
@@ -125,6 +127,7 @@ class QemuWinDriverTestCase(unittest.TestCase):
   @mock.patch('driver.CONF')
   @mock.patch('driver.QemuWinDriver.__init__',mock.Mock(return_value=None))
   @mock.patch('driver.minidom')
+  @mock.patch('driver.time.sleep', mock.Mock())
   def test_getEl(self, mock_conf, mock_minidom):
     qemuwindriver = QemuWinDriver()
     elName = 'cpu'
@@ -139,6 +142,7 @@ class QemuWinDriverTestCase(unittest.TestCase):
   @mock.patch('driver.CONF')
   @mock.patch('driver.QemuWinDriver.__init__',mock.Mock(return_value=None))
   @mock.patch('driver.minidom')
+  @mock.patch('driver.time.sleep', mock.Mock())
   def test_getEls(self, mock_conf, mock_minidom):
     qemuwindriver = QemuWinDriver()
     elName = 'cpu'
@@ -152,6 +156,7 @@ class QemuWinDriverTestCase(unittest.TestCase):
 
   @mock.patch('driver.CONF')
   @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value=None))
+  @mock.patch('driver.time.sleep', mock.Mock())
   def test_qemuCommandNew(self, mock_conf):
     qemuwindriver = QemuWinDriver()
     mock_conf.qemu_home = INSTANCE_TEST_PATH
@@ -167,6 +172,7 @@ class QemuWinDriverTestCase(unittest.TestCase):
 
   @mock.patch('driver.CONF')
   @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value=None))
+  @mock.patch('driver.time.sleep', mock.Mock())
   def test_qemuCommandAddArg(self, mock_conf):
     qemuwindriver = QemuWinDriver()
     command = ['fakecommand']
@@ -178,6 +184,7 @@ class QemuWinDriverTestCase(unittest.TestCase):
 
   @mock.patch('driver.CONF')
   @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value=None))
+  @mock.patch('driver.time.sleep', mock.Mock())
   def test_qemuCommandStr(self, mock_conf):
     qemuwindriver = QemuWinDriver()
     command = ['fakecommand', 'fakearg', 'fakevalue']
@@ -201,6 +208,7 @@ class QemuWinDriverTestCase(unittest.TestCase):
   @mock.patch('driver.QemuWinDriver._next_vnc_display', mock.Mock(return_value=('fakedisplay', 'fakeport')))
   @mock.patch('driver.QemuWinDriver._get_ephemeral_port', mock.Mock(return_value= 'fakeephemeralport'))  
   @mock.patch('driver.QemuWinDriver.qemuCommandNew', mock.Mock(return_value=['%s%s'  % (INSTANCE_TEST_PATH, 'qemu-system-i386')]))
+  @mock.patch('driver.time.sleep', mock.Mock())
   def test_create_qemu_machine(self, mock_minidom):
     qemuwindriver = QemuWinDriver()
     diskSource = mock.Mock(attributes ={"file":'fakefile'})
@@ -273,6 +281,7 @@ class QemuWinDriverTestCase(unittest.TestCase):
   '%s%s' % (INSTANCE_TEST_PATH, 'metadataproxy.pid' )]))
   @mock.patch('driver.open', mock.mock_open(read_data = 'fakepid'), create = True)
   @mock.patch('driver.QemuWinDriver._create_subproccess', mock.Mock(return_value = 'fakeprocces'))
+  @mock.patch('driver.time.sleep', mock.Mock())
   def test_start_metadata_proxy(self, mock_conf, mock_path):
     instance = {'uuid':'fakeuuid'}
     tenant_id = 'faketenantid'
@@ -294,6 +303,7 @@ class QemuWinDriverTestCase(unittest.TestCase):
   '%s%s' % (INSTANCE_TEST_PATH, 'metadataproxy.pid' )]))
   @mock.patch('driver.open', mock.mock_open(read_data = ''), create = True)
   @mock.patch('driver.QemuWinDriver._create_subproccess', mock.Mock(return_value = 'fakeprocces'))
+  @mock.patch('driver.time.sleep', mock.Mock())
   def test_start_metadata_proxy_no_pid_information(self, mock_conf, mock_path):
     instance = {'uuid':'fakeuuid'}
     tenant_id = 'faketenantid'
@@ -311,6 +321,7 @@ class QemuWinDriverTestCase(unittest.TestCase):
   @mock.patch('driver.os.path.join', mock.Mock(return_value = 'fakemetadafile'))
   @mock.patch('driver.open', mock.mock_open(), create = True)
   @mock.patch('driver.QemuWinDriver._dump_metadata', mock.Mock())
+  @mock.patch('driver.time.sleep', mock.Mock())
   def test_create_instance_metadata_file(self):
     metadata = 'fakemetadata'
     qemuwindriver = QemuWinDriver();
@@ -319,6 +330,46 @@ class QemuWinDriverTestCase(unittest.TestCase):
 
     assert qemuwindriver._dump_metadata.called
 
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value= None))
+  @mock.patch('driver.QemuWinDriver._get_instance_path', mock.Mock(return_value = '%s%s' % (INSTANCE_TEST_PATH, 'metadatafile')))
+  @mock.patch('driver.os.path.join', mock.Mock(return_value = 'fakeconsolelogfile'))
+  @mock.patch('driver.os.path.isfile', mock.Mock(return_value = True))
+  @mock.patch('driver.os.path.getsize', mock.Mock(return_value = 1))
+  @mock.patch('driver.time.sleep', mock.Mock())
+  def test_check_machine_started_smooth_run(self):
+    instance = 'instance'
+    qemuwindriver = QemuWinDriver()
+    self.assertTrue(qemuwindriver._check_machine_started(instance))
+
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value= None))
+  @mock.patch('driver.QemuWinDriver._get_instance_path', mock.Mock(return_value = '%s%s' % (INSTANCE_TEST_PATH, 'metadatafile')))
+  @mock.patch('driver.os.path.join', mock.Mock(return_value = 'fakeconsolelogfile'))
+  @mock.patch('driver.os.path.isfile', mock.Mock(return_value = False))
+  @mock.patch('driver.os.path.getsize', mock.Mock(return_value = 1))
+  @mock.patch('driver.time.sleep', mock.Mock())
+  def test_check_machine_started_no_file(self):
+    instance = 'instance'
+    qemuwindriver = QemuWinDriver()
+    self.assertFalse(qemuwindriver._check_machine_started(instance))
+
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value= None))
+  @mock.patch('driver.QemuWinDriver._get_instance_path', mock.Mock(return_value = '%s%s' % (INSTANCE_TEST_PATH, 'metadatafile')))
+  @mock.patch('driver.os.path.join', mock.Mock(return_value = 'fakeconsolelogfile'))
+  @mock.patch('driver.os.path.isfile', mock.Mock(return_value = True))
+  @mock.patch('driver.os.path.getsize', mock.Mock(return_value = 0))
+  @mock.patch('driver.time.sleep', mock.Mock())
+  def test_check_machine_started_file_is_empty(self):
+    instance = 'instance'
+    qemuwindriver = QemuWinDriver()
+    self.assertFalse(qemuwindriver._check_machine_started(instance))
+
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.QemuWinDriver._get_available_port', mock.Mock(return_value = 5901))
+  def test_next_vnc_display(self):
+    qemuwindriver = QemuWinDriver()
+    test_result = qemuwindriver._next_vnc_display()
+    expected_result = (1, 5901)
+    self.assertEqual(expected_result, test_result)
 
 if __name__ == "__main__":
   unittest.main()

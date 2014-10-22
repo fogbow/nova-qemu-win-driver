@@ -572,7 +572,7 @@ class QemuWinDriver(driver.ComputeDriver):
 
     def _check_machine_started(self, instance):
         time.sleep(QEMU_STARTUP_TIMEOUT)
-        instance_dir = libvirt_utils.get_instance_path(instance)
+        instance_dir = self._get_instance_path(instance)
         console_log = os.path.join(instance_dir, 'console.log')
         if os.path.isfile(console_log):
             if os.path.getsize(console_log) > 0:
