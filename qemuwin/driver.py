@@ -672,7 +672,15 @@ class QemuWinDriver(driver.ComputeDriver):
         disk_config = self._get_disk_config_path(instance)
         if os.path.exists(disk_config):
             self._chown(disk_config, os.getuid())
-      
+    
+    @staticmethod  
+    def _create_raw_image(target, local_size, unit):
+      libvirt_utils.create_image('raw', target, '%d%c' % (local_size, unit))
+
+    @staticmethod
+    def _mkfs(fs_format, target, label):
+      utils.mkfs(fs_format, target, label)
+
     @staticmethod
     def _create_local(target, local_size, unit='G',
                       fs_format=None, label=None):
@@ -681,10 +689,10 @@ class QemuWinDriver(driver.ComputeDriver):
         if not fs_format:
             fs_format = CONF.default_ephemeral_format
 
-        libvirt_utils.create_image('raw', target,
-                                   '%d%c' % (local_size, unit))
+        QemuWinDriver._create_raw_image(target, local_size, unit)
         if fs_format:
-            utils.mkfs(fs_format, target, label)
+            QemuWinDriver._mkfs(fs_format, target, label)
+
 
     def _create_ephemeral(self, target, ephemeral_size, fs_label, os_type,
                           max_size=None):

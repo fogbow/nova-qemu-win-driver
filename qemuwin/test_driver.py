@@ -476,5 +476,18 @@ class QemuWinDriverTestCase(unittest.TestCase):
     qemuwindriver._chown_disk_config_for_instance(instance)
     assert not qemuwindriver._chown.called, 'method should not have been called'
 
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.CONF')
+  @mock.patch('driver.QemuWinDriver._create_raw_image', mock.Mock())
+  @mock.patch('driver.QemuWinDriver._mkfs', mock.Mock())
+  def test_create_local(self, mock_conf):
+    target = 'faketarget'
+    local_size = 5
+    mock_conf.default_ephemeral_format = 'fakeformat'
+    QemuWinDriver._create_local(target, local_size)
+    QemuWinDriver._mkfs.assert_called_with('fakeformat', target, None)
+    QemuWinDriver._create_raw_image.assert_called_with(target, 5, 'G')
+
+
 if __name__ == "__main__":
   unittest.main()
