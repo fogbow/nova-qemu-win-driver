@@ -15,7 +15,8 @@ INSTANCE_TEST_PATH = 'C:\\iunittest\\'
 instance_tracker = [];
 class QemuWinDriverTestCase(unittest.TestCase):
 
-
+  def mock_getuid():
+    return 'fakeuid'
 
   maxDiff = None
    
@@ -428,22 +429,7 @@ class QemuWinDriverTestCase(unittest.TestCase):
   @mock.patch('driver.QemuWinDriver._get_console_log_path', mock.Mock(return_value = INSTANCE_TEST_PATH))
   @mock.patch('driver.os.path')
   @mock.patch('driver.QemuWinDriver._chown', mock.Mock())
-  @mock.Mock('driver.os.getuid', returns = 'fakeuid')
-  def test_chown_console_log_for_instance_path_exists(self, mock_path, mock_os):
-    mock_os.getuid.return_value = 'fakeuid' 
-    mock_path.exists.return_value = True
-    instance = 'fakeinstance'
-    qemuwindriver = QemuWinDriver()
-    qemuwindriver._chown_console_log_for_instance(instance)
-    qemuwindriver._chown.assert_called_with(INSTANCE_TEST_PATH, 'fakeuid')
-
-  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
-  @mock.patch('driver.QemuWinDriver._get_console_log_path', mock.Mock(return_value = INSTANCE_TEST_PATH))
-  @mock.patch('driver.os.path')
-  @mock.patch('driver.QemuWinDriver._chown', mock.Mock())
-  @mock.Mock('driver.os.getuid', returns = 'fakeuid')
-  def test_chown_console_log_for_instance_path_not_exists(self, mock_path, mock_os):
-    mock_os.getuid.return_value = 'fakeuid' 
+  def test_chown_console_log_for_instance_path_not_exists(self, mock_path):
     mock_path.exists.return_value = False
     instance = 'fakeinstance'
     qemuwindriver = QemuWinDriver()
@@ -454,39 +440,35 @@ class QemuWinDriverTestCase(unittest.TestCase):
   @mock.patch('driver.QemuWinDriver._get_disk_config_path', mock.Mock(return_value = INSTANCE_TEST_PATH))
   @mock.patch('driver.os.path')
   @mock.patch('driver.QemuWinDriver._chown', mock.Mock())
-  @mock.Mock('driver.os.getuid', returns = 'fakeuid')
-  def test_chown_disk_config_for_instance_path_exists(self, mock_path, mock_os):
-    mock_os.getuid.return_value = 'fakeuid' 
-    mock_path.exists.return_value = True
-    instance = 'fakeinstance'
-    qemuwindriver = QemuWinDriver()
-    qemuwindriver._chown_disk_config_for_instance(instance)
-    qemuwindriver._chown.assert_called_with(INSTANCE_TEST_PATH, 'fakeuid')
-
-  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
-  @mock.patch('driver.QemuWinDriver._get_disk_config_path', mock.Mock(return_value = INSTANCE_TEST_PATH))
-  @mock.patch('driver.os.path')
-  @mock.patch('driver.QemuWinDriver._chown', mock.Mock())
-  @mock.Mock('driver.os.getuid', returns = 'fakeuid')
-  def test_chown_disk_config_for_instance_path_not_exists(self, mock_path, mock_os):
-    mock_os.getuid.return_value = 'fakeuid' 
+  def test_chown_disk_config_for_instance_path_not_exists(self, mock_path):
     mock_path.exists.return_value = False
     instance = 'fakeinstance'
     qemuwindriver = QemuWinDriver()
     qemuwindriver._chown_disk_config_for_instance(instance)
     assert not qemuwindriver._chown.called, 'method should not have been called'
 
-  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
   @mock.patch('driver.CONF')
   @mock.patch('driver.QemuWinDriver._create_raw_image', mock.Mock())
-  @mock.patch('driver.QemuWinDriver._mkfs', mock.Mock())
+  @mock.patch('driver.QemuWinDriver._utils_mkfs', mock.Mock())
   def test_create_local(self, mock_conf):
     target = 'faketarget'
     local_size = 5
     mock_conf.default_ephemeral_format = 'fakeformat'
     QemuWinDriver._create_local(target, local_size)
-    QemuWinDriver._mkfs.assert_called_with('fakeformat', target, None)
+    QemuWinDriver._utils_mkfs.assert_called_with('fakeformat', target, None)
     QemuWinDriver._create_raw_image.assert_called_with(target, 5, 'G')
+
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.QemuWinDriver._create_local', mock.Mock())
+  @mock.patch('driver.disk.mkfs', mock.Mock())
+  def test_create_ephemeral(self):
+    qemuwindriver = QemuWinDriver()
+    target = 'faketarget'
+    ephemeral_size = 'fakeephemeralsize'
+    fs_label = 'fakefs_label'
+    os_type = 'fakeos_type'
+    qemuwindriver._create_ephemeral(target, ephemeral_size, fs_label, os_type)
+    qemuwindriver._create_local.assert_called_with(target, ephemeral_size)
 
 
 if __name__ == "__main__":

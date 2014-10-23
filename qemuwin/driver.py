@@ -675,11 +675,11 @@ class QemuWinDriver(driver.ComputeDriver):
     
     @staticmethod  
     def _create_raw_image(target, local_size, unit):
-      libvirt_utils.create_image('raw', target, '%d%c' % (local_size, unit))
+        libvirt_utils.create_image('raw', target, '%d%c' % (local_size, unit))
 
     @staticmethod
-    def _mkfs(fs_format, target, label):
-      utils.mkfs(fs_format, target, label)
+    def _utils_mkfs(fs_format, target, label):
+        utils.mkfs(fs_format, target, label)
 
     @staticmethod
     def _create_local(target, local_size, unit='G',
@@ -691,8 +691,7 @@ class QemuWinDriver(driver.ComputeDriver):
 
         QemuWinDriver._create_raw_image(target, local_size, unit)
         if fs_format:
-            QemuWinDriver._mkfs(fs_format, target, label)
-
+            QemuWinDriver._utils_mkfs(fs_format, target, label)
 
     def _create_ephemeral(self, target, ephemeral_size, fs_label, os_type,
                           max_size=None):
