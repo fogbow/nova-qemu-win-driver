@@ -470,6 +470,43 @@ class QemuWinDriverTestCase(unittest.TestCase):
     qemuwindriver._create_ephemeral(target, ephemeral_size, fs_label, os_type)
     qemuwindriver._create_local.assert_called_with(target, ephemeral_size)
 
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.CONF')
+  @mock.patch('driver.os.path.join', mock.Mock(return_value = '%s%s' % (INSTANCE_TEST_PATH, 'host_state')))
+  @mock.patch('driver.open', mock.mock_open(read_data = 'fakedata'), create = True)
+  @mock.patch('driver.json.load', mock.Mock(return_value = 'fakestate'))
+  def test_get_host_state_exists(self, mock_conf):
+    qemuwindriver = QemuWinDriver()
+    mock_conf.instance_path = INSTANCE_TEST_PATH
+    expected_result = 'fakestate'
+    actual_result = qemuwindriver._get_host_state()
+    self.assertEqual(expected_result, actual_result)
+
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.CONF')
+  @mock.patch('driver.os.path.join', mock.Mock(return_value = '%s%s' % (INSTANCE_TEST_PATH, 'host_state')))
+  @mock.patch('driver.open', mock.Mock(side_effect = Exception('Failure!')), create = True)
+  @mock.patch('driver.QemuWinDriver._create_host_state_file', mock.Mock(return_value = 'fakestate'))
+  def test_get_host_state_file_not_exists(self, mock_conf):
+    qemuwindriver = QemuWinDriver()
+    mock_conf.instance_path = INSTANCE_TEST_PATH
+    expected_result = 'fakestate'
+    actual_result = qemuwindriver._get_host_state()
+    self.assertEqual(expected_result, actual_result)
+
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.CONF')
+  @mock.patch('driver.os.path.join', mock.Mock(return_value = '%s%s' % (INSTANCE_TEST_PATH, 'host_state')))
+  @mock.patch('driver.QemuWinDriver._create_host_uuid', mock.Mock(return_value = 'fakeuuid'))
+  @mock.patch('driver.QemuWinDriver._get_host_arch', mock.Mock(return_value = 'fakearch'))
+  @mock.patch('driver.open', mock.mock_open(), create = True)
+  @mock.patch('driver.json.dump', mock.Mock(), create = True)
+  def test_create_host_state_file(self, mock_conf):
+    mock_conf.instance_path = INSTANCE_TEST_PATH
+    qemuwindriver = QemuWinDriver()
+    expected_result = {'uuid': 'fakeuuid', 'arch': 'fakearch', 'next_volume_index': 0}
+    actual_result = qemuwindriver._create_host_state_file()
+    self.assertEqual(expected_result, actual_result)
 
 if __name__ == "__main__":
   unittest.main()
