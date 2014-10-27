@@ -541,7 +541,7 @@ class QemuWinDriverTestCase(unittest.TestCase):
   @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
   @mock.patch('driver.QemuWinDriver.get_host_capabilities', mock.Mock(return_value = mock.Mock(host  = mock.Mock( cpu = mock.Mock(model = 'fakemodel', vendor = 'fakevendor', arch = 'i386', features = [])))))
   @mock.patch('driver.vconfig.LibvirtConfigGuestCPU', mock.Mock(), create = True)
-  def test_get_host_cpus_for_guests(self):
+  def test_get_host_cpu_for_guest(self):
     qemuwindriver = QemuWinDriver()
     expected_model = 'fakemodel'
     expected_vendor = 'fakevendor'
