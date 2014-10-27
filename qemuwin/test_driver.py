@@ -507,6 +507,37 @@ class QemuWinDriverTestCase(unittest.TestCase):
     expected_result = {'uuid': 'fakeuuid', 'arch': 'fakearch', 'next_volume_index': 0}
     actual_result = qemuwindriver._create_host_state_file()
     self.assertEqual(expected_result, actual_result)
+  
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.QemuWinDriver._get_host_state', mock.Mock(return_value = {'uuid' : 'fakeuuid'}))
+  @mock.patch('driver.vconfig.LibvirtConfigCaps', mock.Mock(), create = True)
+  @mock.patch('driver.vconfig.LibvirtConfigCapsHost', mock.Mock(), create = True)
+  @mock.patch('driver.vconfig.LibvirtConfigGuestCPU', mock.Mock(), create = True)
+  @mock.patch('driver.QemuWinDriver._get_host_arch', mock.Mock(return_value = 'i386'))
+  def test_get_host_capabilities_no_existing_caps(self):
+    qemuwindriver = QemuWinDriver()
+    qemuwindriver._caps = None
+    expected_uuid = 'fakeuuid'
+    expected_arch = 'i386'
+    expected_model = 'host-model'
+    expected_vendor = 'Intel'
+    expected_features = []
+    actual_result = qemuwindriver.get_host_capabilities()
+    self.assertEqual(expected_uuid, actual_result.host.uuid) 
+    self.assertEqual(expected_arch, actual_result.host.cpu.arch)
+    self.assertEqual(expected_model, actual_result.host.cpu.model)
+    self.assertEqual(expected_vendor, actual_result.host.cpu.vendor)
+    self.assertEqual(expected_features, actual_result.host.cpu.features)
+
+
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value= None))
+  @mock.patch('driver.QemuWinDriver.get_host_capabilities', mock.Mock(return_value = mock.Mock(host = mock.Mock(uuid  = 'fakeuuid'))))
+  def test_get_host_uuid(self):
+    qemuwindriver = QemuWinDriver()
+    expected_result = 'fakeuuid'
+    actual_result= qemuwindriver.get_host_uuid()
+    self.assertEqual(expected_result, actual_result)
+
 
 if __name__ == "__main__":
   unittest.main()
