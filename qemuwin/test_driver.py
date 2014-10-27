@@ -538,6 +538,21 @@ class QemuWinDriverTestCase(unittest.TestCase):
     actual_result= qemuwindriver.get_host_uuid()
     self.assertEqual(expected_result, actual_result)
 
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.QemuWinDriver.get_host_capabilities', mock.Mock(return_value = mock.Mock(host  = mock.Mock( cpu = mock.Mock(model = 'fakemodel', vendor = 'fakevendor', arch = 'i386', features = [])))))
+  @mock.patch('driver.vconfig.LibvirtConfigGuestCPU', mock.Mock(), create = True)
+  def test_get_host_cpus_for_guests(self):
+    qemuwindriver = QemuWinDriver()
+    expected_model = 'fakemodel'
+    expected_vendor = 'fakevendor'
+    expected_arch = 'i386'
+    actual_result = qemuwindriver.get_host_cpu_for_guest()
+    self.assertEqual(expected_model, actual_result.model)
+    self.assertEqual(expected_vendor, actual_result.vendor)
+    self.assertEqual(expected_arch, actual_result.arch)
+
+
+
 
 if __name__ == "__main__":
   unittest.main()
