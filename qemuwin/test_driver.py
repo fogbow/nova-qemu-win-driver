@@ -551,8 +551,35 @@ class QemuWinDriverTestCase(unittest.TestCase):
     self.assertEqual(expected_vendor, actual_result.vendor)
     self.assertEqual(expected_arch, actual_result.arch)
 
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.CONF')
+  @mock.patch('driver.QemuWinDriver.get_host_cpu_for_guest',mock.Mock(return_value = 'fakecpu'))
+  def test_get_guest_cpu_config_mode_is_none(self, mock_conf):
+    mock_conf.libvirt_cpu_mode = None
+    mock_conf.libvirt_cpu_model = None
+    qemuwindriver = QemuWinDriver()
+    expected_result = 'fakecpu'
+    actual_result = qemuwindriver.get_guest_cpu_config()
+    self.assertEqual(expected_result, actual_result)
 
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.CONF')
+  def test_get_guest_cpu_config_mode_is_none_model_not_none(self, mock_conf):
+    mock_conf.libvirt_cpu_mode = None
+    mock_conf.libvirt_cpu_model = 'Notnone'
+    qemuwindriver = QemuWinDriver()
+    expected_result = 'fakecpu'
+    self.assertRaises(Exception, qemuwindriver.get_guest_cpu_config)
 
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.CONF')
+  def test_set_cache_mode(self, mock_conf):
+    mock_conf.source_type = 'fakesourcetype'
+    mock_conf.driver_cache = 'fakedrivercache'
+    qemuwindriver = QemuWinDriver()
+    qemuwindriver.disk_cachemodes = {'fakemode' : 'fakecachemode'}
+    qemuwindriver.set_cache_mode(mock_conf)
+    self.assertEqual('fakecachemode', mock_conf.driver_cache)
 
 if __name__ == "__main__":
   unittest.main()
