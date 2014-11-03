@@ -581,5 +581,86 @@ class QemuWinDriverTestCase(unittest.TestCase):
     qemuwindriver.set_cache_mode(mock_conf)
     self.assertEqual('fakecachemode', mock_conf.driver_cache)
 
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.driver.block_device_info_get_mapping', mock.Mock(return_value = 'fakedeviceinfo'), create = True)
+  @mock.patch('driver.QemuWinDriver.get_guest_disk_config', mock.Mock(side_effect = ['fakediskrescueconfig', 'fakediskosconfig', 'fakediskconfigconfig']))
+  @mock.patch('driver.QemuWinDriver.set_cache_mode', mock.Mock())
+  def test_get_guest_storage_config_rescue(self):
+    qemuwindriver = QemuWinDriver()
+    instance = 'fakeinstance'
+    image_meta = 'fakeimagemeta'
+    disk_info = {'mapping': ['disk.config']}
+    rescue = True
+    block_device_info = 'fakeblockdeviceinfo'
+    inst_type = 'fakeinsttype'
+    expected_result = ['fakediskrescueconfig', 'fakediskosconfig', 'fakediskconfigconfig']
+    actual_result = qemuwindriver.get_guest_storage_config(instance, image_meta, disk_info, rescue, block_device_info, inst_type)
+    assert qemuwindriver.set_cache_mode.called
+    self.assertEqual(expected_result, actual_result)
+
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.driver.block_device_info_get_mapping', mock.Mock(return_value = [{'connection_info': 'fakeconnectioninfo', 'mount_device':'fakedevice'}]))
+  @mock.patch('driver.QemuWinDriver.get_guest_disk_config', mock.Mock(side_effect = ['fakediskosconfig', 'fakedisklocalconfig', 'fakediskephconfig', 'fakediskswapconfig']))
+  @mock.patch('driver.virtapi.instance_update', mock.Mock())
+  @mock.patch('driver.driver.block_device_info_get_ephemerals', mock.Mock(return_value = 'fakeephemeralinfo'))
+  @mock.patch('driver.enumerate', mock.Mock(return_value = [('fakeidx', 'fakeeph')]))
+  @mock.patch('driver.blockinfo.get_eph_disk', mock.Mock(return_value = 'fakeephdisk'))
+  @mock.patch('driver.block_device.prepend_dev', mock.Mock(return_value = 0))
+  @mock.patch('driver.QemuWinDriver.volume_driver_method', mock.Mock(return_value = 'fakevolumedriverconfig'))
+  @mock.patch('driver.QemuWinDriver.set_cache_mode', mock.Mock())
+  def test_get_guest_storage_config_not_rescue(self):
+    qemuwindriver = QemuWinDriver()
+    instance = 'fakeinstance'
+    image_meta = 'fakeimagemeta'
+    disk_info = {'mapping': ['disk', 'disk.local', 'disk.swap']}
+    rescue = False
+    block_device_info = 'fakeblockdeviceinfo'
+    inst_type = 'fakeinsttype'
+    expected_result = ['fakediskosconfig', 'fakedisklocalconfig', 'fakediskephconfig', 'fakediskswapconfig', 'fakevolumedriverconfig']
+    actual_result = qemuwindriver.get_guest_storage_config(instance, image_meta, disk_info, rescue, block_device_info, inst_type)
+    assert driver.virtapi.instance_update.called
+    assert qemuwindriver.set_cache_mode.called
+    self.assertEqual(expected_result, actual_result)  
+
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.vconfig.LibvirtConfigGuestSysinfo', mock.Mock())
+  @mock.patch('driver.version.vendor_string', mock.Mock(return_value = 'fakevendorstring'))
+  @mock.patch('driver.version.product_string', mock.Mock(return_value = 'fakeproductstring'))
+  @mock.patch('driver.version.version_string_with_package', mock.Mock(return_value = 'fakeversionstring'))
+  @mock.patch('driver.QemuWinDriver.get_host_uuid', mock.Mock(return_value = 'fakehostuuid'))
+  def test_get_guest_config_sysinfo(self):
+    qemuwindriver = QemuWinDriver()
+    instance = {'uuid' : 'fakeuuid'}
+    expected_system_manufacturer = 'fakevendorstring'
+    expected_system_product = 'fakeproductstring'
+    expected_system_version = 'fakeversionstring'
+    expected_system_serial = 'fakehostuuid'
+    expected_system_uuid = 'fakeuuid'
+
+    actual_result = qemuwindriver.get_guest_config_sysinfo(instance)
+    self.assertEqual(expected_system_manufacturer, actual_result.system_manufacturer)
+    self.assertEqual(expected_system_product, actual_result.system_product)
+    self.assertEqual(expected_system_version, actual_result.system_version)
+    self.assertEqual(expected_system_version, actual_result.system_version)
+    self.assertEqual(expected_system_serial, actual_result.system_serial)
+    self.assertEqual(expected_system_uuid, actual_result.system_uuid)
+
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.pci_utils.parse_address', mock.Mock(return_value = ('fakedomain', 'fakebus', 'fakeslot', 'fakefunction')))
+  @mock.patch('driver.vconfig.LibvirtConfigGuestHostdevPCI', mock.Mock())
+  def test_get_guest_pci_device(self):
+    qemuwindriver = QemuWinDriver()
+    pci_device = {'address' : 'fakeaddress'}
+    expected_domain = 'fakedomain'
+    expected_bus = 'fakebus'
+    expected_slot = 'fakeslot'
+    expected_function = 'fakefunction'
+    expected_managed = 'yes'
+    actual_result = qemuwindriver.get_guest_pci_device(pci_device)
+    self.assertEqual(expected_domain, actual_result.domain)
+    self.assertEqual(expected_bus, actual_result.bus)
+    self.assertEqual(expected_slot, actual_result.slot)
+    self.assertEqual(expected_function, actual_result.function)
+    self.assertEqual(expected_managed, actual_result.managed)
 if __name__ == "__main__":
   unittest.main()
