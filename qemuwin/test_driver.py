@@ -601,7 +601,6 @@ class QemuWinDriverTestCase(unittest.TestCase):
   @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
   @mock.patch('driver.driver.block_device_info_get_mapping', mock.Mock(return_value = [{'connection_info': 'fakeconnectioninfo', 'mount_device':'fakedevice'}]))
   @mock.patch('driver.QemuWinDriver.get_guest_disk_config', mock.Mock(side_effect = ['fakediskosconfig', 'fakedisklocalconfig', 'fakediskephconfig', 'fakediskswapconfig']))
-  @mock.patch('driver.virtapi.instance_update', mock.Mock())
   @mock.patch('driver.driver.block_device_info_get_ephemerals', mock.Mock(return_value = 'fakeephemeralinfo'))
   @mock.patch('driver.enumerate', mock.Mock(return_value = [('fakeidx', 'fakeeph')]))
   @mock.patch('driver.blockinfo.get_eph_disk', mock.Mock(return_value = 'fakeephdisk'))
@@ -610,6 +609,8 @@ class QemuWinDriverTestCase(unittest.TestCase):
   @mock.patch('driver.QemuWinDriver.set_cache_mode', mock.Mock())
   def test_get_guest_storage_config_not_rescue(self):
     qemuwindriver = QemuWinDriver()
+    qemuwindriver.virtapi = mock.Mock()
+    qemuwindriver.virtapi.instance_update = mock.Mock()
     instance = 'fakeinstance'
     image_meta = 'fakeimagemeta'
     disk_info = {'mapping': ['disk', 'disk.local', 'disk.swap']}
@@ -662,5 +663,47 @@ class QemuWinDriverTestCase(unittest.TestCase):
     self.assertEqual(expected_slot, actual_result.slot)
     self.assertEqual(expected_function, actual_result.function)
     self.assertEqual(expected_managed, actual_result.managed)
+
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.nova_context.get_admin_context', mock.Mock())
+  @mock.patch('driver.libvirt_utils.get_instance_path', mock.Mock(return_value = 'fakepath'))
+  @mock.patch('driver.vconfig.LibvirtConfigGuest', mock.Mock())
+  @mock.patch('driver.QemuWinDriver.get_guest_cpu_config', mock.Mock(return_value = 'fakecpuconfig'))
+  @mock.patch('driver.block_device.prepend_dev', mock.Mock(return_value = 'fake_root_device_name'))
+  @mock.patch('driver.vm_mode.get_from_instance', mock.Mock(return_value = None))
+  @mock.patch('driver.QemuWinDriver.get_host_capabilities', mock.Mock(host = mock.Mock(cpu = mock.Mock(arch = 'i386'))))
+  @mock.patch('driver.QemuWinDriver.get_guest_config_sysinfo', mock.Mock(return_value = 'fakeconfigsysinfo'))
+  @mock.patch('driver.vconfig.LibvirtConfigGuestSMBIOS',mock.Mock(return_value = 'fakeossmbios'))
+  @mock.patch('driver.vconfig.LibvirtConfigGuestClock', mock.Mock())
+  @mock.patch('driver.vconfig.LibvirtConfigGuestTimer', mock.Mock())
+  @mock.patch('driver.QemuWinDriver.get_guest_storage_config', mock.Mock(return_value = ['fakestorageconfig']))
+  @mock.patch('driver.vconfig.LibvirtConfigGuestSerial', mock.Mock())
+  @mock.patch('driver.vconfig.LibvirtConfigGuestInput', mock.Mock())
+  @mock.patch('driver.vconfig.LibvirtConfigGuestChannel', mock.Mock())
+  @mock.patch('driver.vconfig.LibvirtConfigGuestGraphics', mock.Mock())
+  @mock.patch('driver.CONF')
+  @mock.patch('driver.QemuWinDriver._get_console_log_path', mock.Mock(return_value = 'fakepath'))
+  @mock.patch('driver.pci_manager.get_instance_pci_devs', mock.Mock(return_value = ['fakepcidevice']))
+  @mock.patch('driver.QemuWinDriver.get_guest_pci_device', mock.Mock(return_value = 'fakepcideviceconfig'))
+  def test_get_guest_config(self, mock_conf):
+    qemuwindriver = QemuWinDriver()
+    qemuwindriver.virtapi = mock.Mock()
+    qemuwindriver.virtapi.instance_type_get.return_value =  {'memory_mb': 'fakememory', 'vcpus': 'fakevcpus', 'extra_specs': {'quota:cpu_quota' : 'fake_value'}}
+    qemuwindriver.virtapi.instance_update = mock.Mock()
+    qemuwindriver.vif_driver = mock.Mock()
+    qemuwindriver.vif_driver.get_config.return_value = 'fakevifdriverconfig '
+    mock_conf.libvirt_type = 'fakevirttype'
+    mock_conf.vcpu_pin_set = 'fakecpuset'
+    mock_conf.vnc_enabled = 'True'
+    mock_conf.use_usb_tablet = 'fakeneedusbtablet'
+    mock_conf.spice = mock.Mock()
+    mock_conf.spice.enable = 'fakespiceenabled'
+    mock_conf.spice.agent_enabled = 'fakespiceagentenabled'
+    instance = {'instance_type_id': 'fakeinstancetypeid', 'name': 'fakename', 'uuid': 'fakeuuid', 'kernel_id' : False, 'os_type' : 'windows'}
+    network_info = ['fakevif']
+    image_meta = {'properties': {'hw_qemu_guest_agent': 'fakehw_qga'}}
+    disk_info ={'mapping': {'root': {'dev': 'fakedev'}}}
+    actual_result = qemuwindriver.get_guest_config(instance, network_info, image_meta, disk_info)
+
 if __name__ == "__main__":
   unittest.main()
