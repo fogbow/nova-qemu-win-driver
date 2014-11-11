@@ -705,5 +705,37 @@ class QemuWinDriverTestCase(unittest.TestCase):
     disk_info ={'mapping': {'root': {'dev': 'fakedev'}}}
     actual_result = qemuwindriver.get_guest_config(instance, network_info, image_meta, disk_info)
 
+  @mock.patch('driver.QemuWinDriver.__init__', mock.Mock(return_value = None))
+  @mock.patch('driver.CONF')
+  @mock.patch('driver.fileutils.ensure_tree', mock.Mock())
+  @mock.patch('driver.os.path.join', mock.Mock())
+  @mock.patch('driver.QemuWinDriver._chown_console_log_for_instance', mock.Mock())
+  @mock.patch('driver.QemuWinDriver._chown_disk_config_for_instance', mock.Mock())
+  @mock.patch('driver.libvirt_utils.write_to_file', mock.Mock())
+  @mock.patch('driver.QemuWinDriver._get_console_log_path', mock.Mock())
+  @mock.patch('driver.imagecache.get_cache_fname', mock.Mock(side_effect = ['fakekernelfilename', 'fakeramdiskfilename']))
+  @mock.patch('driver.flavors.extract_flavor', mock.Mock(return_value = 'fakeinsttype'))
+  @mock.patch('driver.disk.get_fs_type_for_os_type', mock.Mock()) 
+  @mock.patch('driver.functools.partial', mock.Mock())
+  @mock.patch('driver.QemuWinDriver._create_ephemeral', mock.Mock())
+  @mock.patch('driver.blockinfo.get_eph_disk', mock.Mock())
+  @mock.patch('driver.driver.block_device_info_get_swap', mock.Mock(return_value = {'swap_size' : 1024}))
+  @mock.patch('driver.driver.swap_is_usable', mock.Mock(return_value = True))
+  @mock.patch('driver.configdrive.required_by', mock.Mock(return_value = True))
+  @mock.patch('driver.configdrive.ConfigDriveBuilder', mock.Mock())
+  @mock.patch('driver.libvirt_utils.chown', mock.Mock())
+  @mock.patch('driver.libvirt_utils.get_instance_path', mock.Mock())
+  def test_create_image_configdrive_required(self, mock_conf):
+    mock_conf.libvirt_images_type = 'fakeimagetype'
+    context = 'fakecontext'
+    instance = {'image_ref' : 'True', 'kernel_id': 'fakekernelid', 'ramdisk_id': None, 'user_id': 'fakeuserid', 'project_id': 'fakeprojectid', 'root_gb' : 1, 'os_type': 'fakeostype', 'ephemeral_gb': 1, 'metadata': 'fakemetadata', 'name': 'fakename', 'uuid': 'fakeuuid'}
+    disk_mapping = {'disk': 'fakediskinfo', 'disk.local': 'fakedisklocalinfo', 'disk.swap': {'dev': 'fakediskswapinfo', 'device_name': 'fakedevicename', 'swap_size': 'fakeswapsize'}}
+    qemuwindriver = QemuWinDriver()
+    qemuwindriver.image_backend = mock.Mock()
+    qemuwindriver._create_image(context, instance, disk_mapping)
+    
+
+
+
 if __name__ == "__main__":
   unittest.main()
