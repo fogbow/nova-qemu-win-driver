@@ -923,9 +923,6 @@ class QemuWinDriver(driver.ComputeDriver):
                 connection_info = vol['connection_info']
                 vol_dev = block_device.prepend_dev(vol['mount_device'])
                 info = disk_mapping[vol_dev]
-                cfg = self.volume_driver_method('connect_volume',
-                                                connection_info,
-                                                info)
                 devices.append(cfg)
 
         if 'disk.config' in disk_mapping:
