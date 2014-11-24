@@ -1329,10 +1329,6 @@ class QemuWinDriver(driver.ComputeDriver):
 
             if swap_mb > 0:
                 size = swap_mb * 1024 * 1024
-                image('disk.swap').cache(fetch_func=self._create_swap,
-                                         filename="swap_%s" % swap_mb,
-                                         size=size,
-                                         swap_mb=swap_mb)
 
         # Config drive
         if configdrive.required_by(instance):
@@ -1343,19 +1339,7 @@ class QemuWinDriver(driver.ComputeDriver):
 
             inst_md = instance_metadata.InstanceMetadata(instance,
                 content=files, extra_md=extra_md, network_info=network_info)
-            with configdrive.ConfigDriveBuilder(instance_md=inst_md) as cdb:
-                configdrive_path = basepath(fname='disk.config')
-                LOG.info(_('Creating config drive at %(path)s'),
-                         {'path': configdrive_path}, instance=instance)
-
-                try:
-                    cdb.make_drive(configdrive_path)
-                except processutils.ProcessExecutionError as e:
-                    with excutils.save_and_reraise_exception():
-                        LOG.error(_('Creating config drive failed '
-                                  'with error: %s'),
-                                  e, instance=instance)
-
+            self.cdb_make_drive(inst_md, basepath(fname='disk.config'), instance)
         # File injection only if needed
         elif inject_files and CONF.libvirt_inject_partition != -2:
 
@@ -1411,6 +1395,22 @@ class QemuWinDriver(driver.ComputeDriver):
 
         if CONF.libvirt_type == 'uml':
             libvirt_utils.chown(image('disk').path, 'root')
+    
+
+    def cdb_make_drive(inst_md, basepath, instance):
+       with configdrive.ConfigDriveBuilder(instance_md=inst_md) as cdb:
+                configdrive_path = basepath
+                LOG.info(_('Creating config drive at %(path)s'),
+                         {'path': configdrive_path}, instance=instance)
+
+                try:
+                    cdb.make_drive(configdrive_path)
+                except processutils.ProcessExecutionError as e:
+                    with excutils.save_and_reraise_exception():
+                        LOG.error(_('Creating config drive failed '
+                                  'with error: %s'),
+                                  e, instance=instance)
+
 
     def live_snapshot(self, context, instance, name, update_task_state):
         if not (self._instance_exists(instance)):
